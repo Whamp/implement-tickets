@@ -3,7 +3,6 @@ import {
   lstat,
   mkdir,
   readFile,
-  realpath,
   rename,
   rm,
   writeFile,
@@ -154,12 +153,7 @@ const readInstalledArtifact = async (artifactPath) => {
 const resolveManagedHome = async (home, create) => {
   const requestedHome = path.resolve(home)
   if (create) await mkdir(requestedHome, { recursive: true })
-  try {
-    return await realpath(requestedHome)
-  } catch (error) {
-    if (error && error.code === 'ENOENT') return requestedHome
-    throw error
-  }
+  return requestedHome
 }
 
 const existingPathIsSymlink = async (targetPath) => {
@@ -182,6 +176,7 @@ class UnsafeManagedPathError extends Error {
 
 const unsafeManagedPaths = async (home, relativePaths) => {
   const unsafe = []
+  if (await existingPathIsSymlink(home)) return [home]
   for (const relativePath of relativePaths) {
     if (relativePath !== manifestRelativePath && !managedRelativePathIsSafe(relativePath)) {
       unsafe.push(homePath(home, relativePath))

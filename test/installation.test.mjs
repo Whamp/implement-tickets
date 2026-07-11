@@ -241,6 +241,25 @@ test('manifest cannot claim another ticket-prefixed agent file', async (t) => {
   assert.equal(await readFile(unrelatedPath, 'utf8'), unrelatedContent)
 })
 
+test('installation preserves a home path reached through an ancestor symlink', {
+  skip: process.platform === 'win32',
+}, async (t) => {
+  const root = await withTemporaryHome(t)
+  const realParent = path.join(root, 'real-parent')
+  const aliasParent = path.join(root, 'alias-parent')
+  const home = path.join(aliasParent, 'home')
+  await mkdir(realParent)
+  await symlink(realParent, aliasParent, 'dir')
+
+  const result = await install({ home })
+  assert.equal(result.changedPaths.length, 8)
+  for (const changedPath of result.changedPaths) {
+    const relativePath = path.relative(home, changedPath)
+    assert.equal(relativePath.startsWith('..') || path.isAbsolute(relativePath), false)
+  }
+  assert.equal((await checkInstallation({ home })).ok, true)
+})
+
 test('install and uninstall reject symlinked managed directories', {
   skip: process.platform === 'win32',
 }, async (t) => {
