@@ -34,6 +34,14 @@ const assertContainsVerbatim = (prompt, source, description) => {
   )
 }
 
+test('vendored upstream bytes use LF on every platform', async () => {
+  const attributes = await readFile(path.join(repositoryRoot, '.gitattributes'), 'utf8')
+  assert.match(
+    attributes,
+    /^vendor\/mattpocock-skills\/v1\.1\.0\/\*\* text eol=lf$/mu,
+  )
+})
+
 test('vendored Matt Pocock v1.1.0 prompt sources are byte-exact', async () => {
   for (const [relativePath, expectedHash] of Object.entries(upstreamFiles)) {
     const content = await readUpstream(relativePath)
