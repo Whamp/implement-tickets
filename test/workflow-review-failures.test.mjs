@@ -136,9 +136,11 @@ const ticketReviewResponder = (
       baseSha: waveSha,
       branch: preparedTicketAssignment.branch,
       candidateSha,
+      commitList: [`${candidateSha.slice(0, 7)} Implement ticket T`],
       key: 'T',
       ok: true,
       reason: '',
+      standardsSources: ['AGENTS.md'],
       worktree: preparedTicketAssignment.worktree,
     }
   }
@@ -147,6 +149,7 @@ const ticketReviewResponder = (
       axis: 'Standards',
       findings: [],
       reviewedSha: candidateSha,
+      report: 'No Standards findings.',
       summary: 'Standards pass.',
       ticketKey: 'T',
       verdict: 'pass',
@@ -185,6 +188,13 @@ test('missing ticket reviewer becomes operational needs-attention without remedi
   assert.equal(callFor(calls, 'standards 1.1 T').options.tier, 'medium')
   assert.equal(callFor(calls, 'spec 1.1 T').options.tier, 'big')
   assert.equal(callFor(calls, 'spec 1.1 T').options.retries, 2)
+  for (const label of ['standards 1.1 T', 'spec 1.1 T']) {
+    const reviewCall = callFor(calls, label)
+    assert.match(reviewCall.prompt, new RegExp(`git diff ${waveSha}\\.\\.\\.HEAD`, 'u'))
+    assert.match(reviewCall.prompt, new RegExp(`${candidateSha.slice(0, 7)} Implement ticket T`, 'u'))
+    assert.equal(reviewCall.options.schema.required.includes('report'), true)
+  }
+  assert.match(callFor(calls, 'standards 1.1 T').prompt, /AGENTS\.md/u)
   assert.equal(callFor(calls, 'record review failure 1 T').options.tier, 'small')
   assert.equal(callFor(calls, 'verify review failure 1 T').options.tier, 'small')
   assert.equal(callFor(calls, 'final implementation report').options.tier, 'medium')
@@ -243,8 +253,10 @@ test('missing final reviewer holds the parent without final remediation', async 
         baseSha,
         candidateSha: finalSha,
         clean: true,
+        commitList: [`${finalSha.slice(0, 7)} Integrate completed tickets`],
         ok: true,
         reason: '',
+        standardsSources: ['AGENTS.md'],
         worktree: completedState.coordinatorWorktree,
       }
     }
@@ -253,6 +265,7 @@ test('missing final reviewer holds the parent without final remediation', async 
         axis: 'Standards',
         findings: [],
         reviewedSha: finalSha,
+        report: 'No final Standards findings.',
         summary: 'Final Standards pass.',
         ticketKey: 'parent',
         verdict: 'pass',
@@ -287,6 +300,13 @@ test('missing final reviewer holds the parent without final remediation', async 
   assert.equal(callFor(calls, 'final standards 1').options.retries, 2)
   assert.equal(callFor(calls, 'final spec 1').options.tier, 'big')
   assert.equal(callFor(calls, 'final spec 1').options.retries, 2)
+  for (const label of ['final standards 1', 'final spec 1']) {
+    const reviewCall = callFor(calls, label)
+    assert.match(reviewCall.prompt, new RegExp(`git diff ${baseSha}\\.\\.\\.HEAD`, 'u'))
+    assert.match(reviewCall.prompt, new RegExp(`${finalSha.slice(0, 7)} Integrate completed tickets`, 'u'))
+    assert.equal(reviewCall.options.schema.required.includes('report'), true)
+  }
+  assert.match(callFor(calls, 'final standards 1').prompt, /AGENTS\.md/u)
   assert.equal(callFor(calls, 'record final review failure 1').options.tier, 'small')
   assert.equal(callFor(calls, 'verify final review failure 1').options.tier, 'small')
   assert.equal(callFor(calls, 'final implementation report').options.tier, 'medium')

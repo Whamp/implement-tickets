@@ -1,6 +1,6 @@
 {
   "name": "@whamp/implement-tickets",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Dependency-aware ticket implementation with independent implementation and review agents for pi-dynamic-workflows",
   "license": "MIT",

@@ -16,7 +16,7 @@ const loadHelpers = async () => {
     .slice(0, bootstrapOffset)
     .replace(/^export const meta =/u, 'const meta =')
   const context = vm.createContext({ args: {}, cwd: repositoryRoot })
-  new vm.Script(`${helperSource}\nglobalThis.helpers = {\n  allowedCompletionKeys,\n  preparedWaveIsCoherent,\n  remediationTransitionIsCoherent,\n  stateTransitionIsCoherent,\n}\n`).runInContext(context)
+  new vm.Script(`${helperSource}\nglobalThis.helpers = {\n  allowedCompletionKeys,\n  preparedWaveIsCoherent,\n  remediationTransitionIsCoherent,\n  reviewContextIsValid,\n  stateTransitionIsCoherent,\n}\n`).runInContext(context)
   return context.helpers
 }
 
@@ -104,6 +104,24 @@ test('missing reviewer results are classified by axis as operational failures', 
   assert.deepEqual([...missingReviewAxes(reviews, reviewIndex, 'T')], ['Spec'])
   assert.deepEqual([...missingReviewAxes(reviews, reviewIndex, 'U')], ['Standards'])
   assert.deepEqual([...missingReviewAxes(reviews, reviewIndex, 'unknown')], [])
+})
+
+test('review context requires a non-empty commit list and unique standards sources', async () => {
+  const { reviewContextIsValid } = await loadHelpers()
+
+  assert.equal(reviewContextIsValid({
+    commitList: ['abc1234 Implement ticket'],
+    standardsSources: ['AGENTS.md', 'CONTRIBUTING.md'],
+  }), true)
+  assert.equal(reviewContextIsValid({ commitList: [], standardsSources: [] }), false)
+  assert.equal(reviewContextIsValid({
+    commitList: ['abc1234 Implement ticket'],
+    standardsSources: ['AGENTS.md', 'AGENTS.md'],
+  }), false)
+  assert.equal(reviewContextIsValid({
+    commitList: ['   '],
+    standardsSources: [],
+  }), false)
 })
 
 test('prepared wave binds every assignment to graph metadata and captured HEAD', async () => {
