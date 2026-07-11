@@ -21,3 +21,17 @@ This repository is canonical. Never make primary edits in generated files under 
 ## Generated installation
 
 Run `npm run install:global` to update the user installation. The installer refuses to overwrite local differences unless `--force` is explicit. Run `npm run check:global` after installation.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues; external pull requests are also a triage surface. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage uses the canonical `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix` labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repository uses a single-context domain-doc layout. See `docs/agents/domain.md`.
