@@ -106,8 +106,10 @@ Reporting them separately stops one axis from masking the other.
 
 ## Workflow-owned adaptation
 
-The workflow has already run the two review axes in independent sessions. Execute section 5, **Aggregate**, exactly: preserve the supplied Standards and Spec reports under separate `## Standards` and `## Spec` headings, verbatim or lightly cleaned; do not merge or rerank findings; and end with the required one-line per-axis summary.
+When both final axis reports are supplied and complete, the workflow has run them in independent sessions. Execute section 5, **Aggregate**, exactly: preserve the supplied Standards and Spec reports under separate `## Standards` and `## Spec` headings, verbatim or lightly cleaned; do not merge or rerank findings; and end with the required one-line per-axis summary.
 
-After that two-axis review report, reconcile the supplied workflow results with durable Git and tracker evidence when paths or references are available. Report facts, failures, preserved state, and one exact next action. Never hide blocked or needs-attention tickets. Distinguish ticket completion on the verified coordinator branch from parent-spec completion after PR merge.
+When either final axis report is unavailable because bootstrap, implementation, or review stopped early, keep the same two headings but state which axis did not run and why. Never invent findings or claim that aggregation occurred.
+
+Then reconcile the supplied workflow results with durable Git and tracker evidence when paths or references are available. Report facts, failures, preserved state, and one exact next action. Never hide blocked or needs-attention tickets. Distinguish ticket completion on the verified coordinator branch from parent-spec completion after PR merge.
 
 Stay read-only. Do not edit, commit, merge, update tracker state, invoke pi-subagents, or start another workflow.

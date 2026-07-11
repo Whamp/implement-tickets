@@ -21,7 +21,8 @@ The exact wording is a runtime contract:
 - Because `/implement` delegates to `/tdd`, the implementer also receives the complete v1.1.0 `/tdd` skill plus its `tests.md` and `mocking.md` references verbatim.
 - Standards, Spec, and final-report roles each contain the complete `/code-review` skill verbatim.
 - The workflow supplies the resolved fixed point, three-dot diff command, commit list, standards-source list, ticket, and parent spec required by the upstream prompts.
-- Each reviewer returns its original under-400-word axis report as durable structured evidence. Remediation tickets and final output preserve `## Standards` and `## Spec` separately without merging or reranking findings.
+- Each reviewer returns its original 1–400-word axis report as durable structured evidence; schema and runtime checks enforce that range. Remediation tickets and final output preserve `## Standards` and `## Spec` separately without merging or reranking findings.
+- Commit subjects and standards-source paths are validated, JSON-serialized, and enclosed in explicit untrusted-data elements so repository-controlled text cannot become reviewer instructions.
 
 The graph workflow makes only these explicit adaptations:
 

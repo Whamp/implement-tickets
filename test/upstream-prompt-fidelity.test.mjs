@@ -73,6 +73,10 @@ test('review roles receive the complete verbatim code-review skill', async () =>
   ]) {
     assertContainsVerbatim(await readRole(roleName), codeReview, `${roleName}.md`)
   }
+
+  const finalReporter = await readRole('ticket-final-reporter')
+  assert.match(finalReporter, /When both final axis reports are supplied/iu)
+  assert.match(finalReporter, /When either final axis report is unavailable/iu)
 })
 
 test('workflow supplies the context required by the verbatim review prompts', async () => {
