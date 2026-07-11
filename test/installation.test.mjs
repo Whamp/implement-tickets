@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import {
+  mkdir,
   mkdtemp,
   readFile,
+  rename,
   rm,
+  symlink,
   unlink,
   writeFile,
 } from 'node:fs/promises'
@@ -145,6 +148,22 @@ test('uninstall removes only canonical artifacts unless forced', async (t) => {
   assert.equal((await checkInstallation({ home })).missingPaths.length, 8)
 })
 
+test('current-version manifest hashes cannot bless local modifications', async (t) => {
+  const home = await withTemporaryHome(t)
+  const rolePath = path.join(home, '.pi', 'agents', 'ticket-implementer.md')
+  const manifestPath = path.join(home, '.pi', 'workflows', 'installations', 'implement-tickets.json')
+  const localContent = 'locally modified and manifest-edited\n'
+
+  await install({ home })
+  await writeFile(rolePath, localContent, 'utf8')
+  const editedManifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+  editedManifest.files['.pi/agents/ticket-implementer.md'] = sha256(localContent)
+  await writeFile(manifestPath, `${JSON.stringify(editedManifest, null, 2)}\n`, 'utf8')
+
+  await assert.rejects(install({ home }), (error) => error.code === 'INSTALL_CONFLICT')
+  await assert.rejects(uninstall({ home }), (error) => error.code === 'UNINSTALL_CONFLICT')
+})
+
 test('uninstall removes untouched artifacts recorded by an older manifest', async (t) => {
   const home = await withTemporaryHome(t)
   const sourcePath = path.join(home, '.pi', 'workflows', 'sources', 'implement-tickets.js')
@@ -162,6 +181,79 @@ test('uninstall removes untouched artifacts recorded by an older manifest', asyn
   const removal = await uninstall({ home })
   assert.equal(removal.removedPaths.length, 8)
   assert.equal((await checkInstallation({ home })).missingPaths.length, 8)
+})
+
+test('install removes retired artifacts recorded by an older manifest', async (t) => {
+  const home = await withTemporaryHome(t)
+  const retiredRelativePath = '.pi/agents/ticket-retired-reviewer.md'
+  const retiredPath = path.join(home, ...retiredRelativePath.split('/'))
+  const manifestPath = path.join(home, '.pi', 'workflows', 'installations', 'implement-tickets.json')
+  const retiredContent = 'retired official role\n'
+
+  await install({ home })
+  await writeFile(retiredPath, retiredContent, 'utf8')
+  const oldManifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+  oldManifest.packageVersion = '0.0.9'
+  oldManifest.files[retiredRelativePath] = sha256(retiredContent)
+  await writeFile(manifestPath, `${JSON.stringify(oldManifest, null, 2)}\n`, 'utf8')
+
+  const upgraded = await install({ home })
+  assert.equal(upgraded.changedPaths.includes(retiredPath), true)
+  await assert.rejects(readFile(retiredPath, 'utf8'), (error) => error.code === 'ENOENT')
+  const currentManifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+  assert.equal(Object.hasOwn(currentManifest.files, retiredRelativePath), false)
+})
+
+test('uninstall removes retired artifacts recorded by an older manifest', async (t) => {
+  const home = await withTemporaryHome(t)
+  const retiredRelativePath = '.pi/agents/ticket-retired-reviewer.md'
+  const retiredPath = path.join(home, ...retiredRelativePath.split('/'))
+  const manifestPath = path.join(home, '.pi', 'workflows', 'installations', 'implement-tickets.json')
+  const retiredContent = 'retired official role\n'
+
+  await install({ home })
+  await writeFile(retiredPath, retiredContent, 'utf8')
+  const oldManifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+  oldManifest.packageVersion = '0.0.9'
+  oldManifest.files[retiredRelativePath] = sha256(retiredContent)
+  await writeFile(manifestPath, `${JSON.stringify(oldManifest, null, 2)}\n`, 'utf8')
+
+  const removal = await uninstall({ home })
+  assert.equal(removal.removedPaths.includes(retiredPath), true)
+  await assert.rejects(readFile(retiredPath, 'utf8'), (error) => error.code === 'ENOENT')
+})
+
+test('install and uninstall reject symlinked managed directories', {
+  skip: process.platform === 'win32',
+}, async (t) => {
+  const home = await withTemporaryHome(t)
+  const outside = path.join(home, 'outside')
+  const agentsPath = path.join(home, '.pi', 'agents')
+  const sourcePath = path.join(home, '.pi', 'workflows', 'sources', 'implement-tickets.js')
+
+  await mkdir(path.join(home, '.pi'), { recursive: true })
+  await mkdir(outside)
+  await symlink(outside, agentsPath, 'dir')
+  await assert.rejects(install({ home }), (error) => error.code === 'INSTALL_PATH_UNSAFE')
+  await assert.rejects(readFile(sourcePath, 'utf8'), (error) => error.code === 'ENOENT')
+  await assert.rejects(
+    readFile(path.join(outside, 'ticket-implementer.md'), 'utf8'),
+    (error) => error.code === 'ENOENT',
+  )
+
+  await unlink(agentsPath)
+  await install({ home })
+  const originalAgentsPath = path.join(home, '.pi', 'agents-original')
+  await rename(agentsPath, originalAgentsPath)
+  await writeFile(
+    path.join(outside, 'ticket-spec-reviewer.md'),
+    await readFile(path.join(originalAgentsPath, 'ticket-spec-reviewer.md'), 'utf8'),
+    'utf8',
+  )
+  await symlink(outside, agentsPath, 'dir')
+
+  await assert.rejects(uninstall({ home }), (error) => error.code === 'UNINSTALL_PATH_UNSAFE')
+  assert.match(await readFile(path.join(outside, 'ticket-spec-reviewer.md'), 'utf8'), /ticket-spec-reviewer/u)
 })
 
 test('install upgrades untouched artifacts recorded by an older manifest', async (t) => {

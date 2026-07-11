@@ -8,7 +8,7 @@ Edit these files in the repository:
 - `agents/*.md`
 - `scripts/lib/installation.mjs`
 
-Do not edit installed files under `~/.pi` and copy them back. Run the installer to generate those files from the repository.
+Do not edit installed files under `~/.pi` and copy them back. Run the installer to generate those files from the repository. Bump `package.json` whenever canonical installed artifacts change after a release; recorded hashes are trusted for upgrades only across package versions.
 
 ## Development loop
 

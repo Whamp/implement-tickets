@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  rm,
+  symlink,
+} from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -62,4 +67,19 @@ test('CLI installs, checks, and uninstalls the global workflow', async (t) => {
 
   const afterRemoval = runScript('check.mjs', home)
   assert.equal(afterRemoval.status, 1)
+})
+
+test('check reports unsafe managed paths without a stack trace', {
+  skip: process.platform === 'win32',
+}, async (t) => {
+  const home = await withTemporaryHome(t)
+  const outside = path.join(home, 'outside')
+  await mkdir(path.join(home, '.pi'), { recursive: true })
+  await mkdir(outside)
+  await symlink(outside, path.join(home, '.pi', 'agents'), 'dir')
+
+  const result = runScript('check.mjs', home)
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /refusing to follow symlinked or unowned installation paths/iu)
+  assert.doesNotMatch(result.stderr, /\n\s+at /u)
 })

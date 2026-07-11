@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
 import {
+  lstat,
   mkdir,
   readFile,
+  realpath,
   rename,
   rm,
   writeFile,
@@ -47,6 +49,12 @@ const savedWorkflowDefinition = {
 const sha256 = (content) => createHash('sha256').update(content).digest('hex')
 
 const homePath = (home, relativePath) => path.join(home, ...relativePath.split('/'))
+
+const managedRelativePathIsSafe = (relativePath) => (
+  /^\.pi\/agents\/ticket-[a-z0-9-]+\.md$/u.test(relativePath) ||
+  /^\.pi\/workflows\/sources\/implement-tickets(?:-[a-z0-9-]+)?\.js$/u.test(relativePath) ||
+  /^\.pi\/workflows\/saved\/implement-tickets(?:-[a-z0-9-]+)?\.json$/u.test(relativePath)
+)
 
 const readCanonicalFiles = async () => {
   const workflow = await readFile(
@@ -139,6 +147,60 @@ const readInstalledArtifact = async (artifactPath) => {
   }
 }
 
+const resolveManagedHome = async (home, create) => {
+  const requestedHome = path.resolve(home)
+  if (create) await mkdir(requestedHome, { recursive: true })
+  try {
+    return await realpath(requestedHome)
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return requestedHome
+    throw error
+  }
+}
+
+const existingPathIsSymlink = async (targetPath) => {
+  try {
+    return (await lstat(targetPath)).isSymbolicLink()
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return false
+    throw error
+  }
+}
+
+class UnsafeManagedPathError extends Error {
+  constructor(code, paths) {
+    super(`Refusing to follow symlinked or unowned installation paths:\n${paths.join('\n')}`)
+    this.code = code
+    this.name = 'UnsafeManagedPathError'
+    this.paths = paths
+  }
+}
+
+const unsafeManagedPaths = async (home, relativePaths) => {
+  const unsafe = []
+  for (const relativePath of relativePaths) {
+    if (relativePath !== manifestRelativePath && !managedRelativePathIsSafe(relativePath)) {
+      unsafe.push(homePath(home, relativePath))
+      continue
+    }
+    const components = relativePath.split('/')
+    let currentPath = home
+    for (const component of components) {
+      currentPath = path.join(currentPath, component)
+      if (await existingPathIsSymlink(currentPath)) {
+        unsafe.push(currentPath)
+        break
+      }
+    }
+  }
+  return [...new Set(unsafe)]
+}
+
+const assertManagedPathsAreSafe = async (home, relativePaths, code) => {
+  const unsafePaths = await unsafeManagedPaths(home, relativePaths)
+  if (unsafePaths.length > 0) throw new UnsafeManagedPathError(code, unsafePaths)
+}
+
 const manifestIsValid = (manifest) => manifest !== null &&
   typeof manifest === 'object' &&
   manifest.schemaVersion === 1 &&
@@ -149,7 +211,7 @@ const manifestIsValid = (manifest) => manifest !== null &&
   typeof manifest.files === 'object' &&
   !Array.isArray(manifest.files) &&
   Object.entries(manifest.files).every(([relativePath, hash]) => (
-    typeof relativePath === 'string' &&
+    managedRelativePathIsSafe(relativePath) &&
     /^[a-f0-9]{64}$/u.test(hash)
   ))
 
@@ -171,6 +233,18 @@ const readManifest = async (home) => {
   } catch {
     return { content, manifest: null, path: manifestPath, valid: false }
   }
+}
+
+const retiredArtifactsFrom = (home, manifestState, currentArtifacts) => {
+  if (!manifestState.valid) return []
+  const currentPaths = new Set(currentArtifacts.map((artifact) => artifact.relativePath))
+  return Object.entries(manifestState.manifest.files)
+    .filter(([relativePath]) => !currentPaths.has(relativePath))
+    .map(([relativePath, recordedHash]) => ({
+      path: homePath(home, relativePath),
+      recordedHash,
+      relativePath,
+    }))
 }
 
 const createManifestContent = ({ artifacts, installedAt, packageVersion }) => {
@@ -200,9 +274,10 @@ const temporarySibling = (targetPath, purpose) => (
   `${targetPath}.${purpose}-${process.pid}-${randomUUID()}`
 )
 
-const applyWrites = async (changes) => {
+const applyTransaction = async (changes, removals) => {
   const staged = []
-  const committed = []
+  const committedWrites = []
+  const committedRemovals = []
 
   try {
     for (const change of changes) {
@@ -217,17 +292,25 @@ const applyWrites = async (changes) => {
         ? temporarySibling(change.path, 'backup')
         : null
       if (backupPath !== null) await rename(change.path, backupPath)
-
       try {
         await rename(change.temporaryPath, change.path)
       } catch (error) {
         if (backupPath !== null) await rename(backupPath, change.path)
         throw error
       }
-      committed.push({ ...change, backupPath })
+      committedWrites.push({ ...change, backupPath })
+    }
+
+    for (const removal of removals) {
+      const backupPath = temporarySibling(removal.path, 'retired')
+      await rename(removal.path, backupPath)
+      committedRemovals.push({ ...removal, backupPath })
     }
   } catch (error) {
-    for (const change of committed.reverse()) {
+    for (const removal of committedRemovals.reverse()) {
+      await rename(removal.backupPath, removal.path)
+    }
+    for (const change of committedWrites.reverse()) {
       await rm(change.path, { force: true })
       if (change.backupPath !== null) await rename(change.backupPath, change.path)
     }
@@ -237,8 +320,11 @@ const applyWrites = async (changes) => {
     throw error
   }
 
-  for (const change of committed) {
+  for (const change of committedWrites) {
     if (change.backupPath !== null) await rm(change.backupPath, { force: true })
+  }
+  for (const removal of committedRemovals) {
+    await rm(removal.backupPath, { force: true })
   }
 }
 
@@ -277,22 +363,48 @@ export const install = async ({
   home = os.homedir(),
   installedAt = new Date(),
 } = {}) => {
-  const { artifacts, packageVersion } = await installationArtifacts({ home, installedAt })
-  const manifestState = await readManifest(home)
+  const managedHome = await resolveManagedHome(home, true)
+  const { artifacts, packageVersion } = await installationArtifacts({
+    home: managedHome,
+    installedAt,
+  })
+  await assertManagedPathsAreSafe(
+    managedHome,
+    [...artifacts.map((artifact) => artifact.relativePath), manifestRelativePath],
+    'INSTALL_PATH_UNSAFE',
+  )
+  const manifestState = await readManifest(managedHome)
+  const recordedReleaseDiffers = manifestState.valid &&
+    manifestState.manifest.packageVersion !== packageVersion
+  const retiredArtifacts = retiredArtifactsFrom(managedHome, manifestState, artifacts)
+  await assertManagedPathsAreSafe(
+    managedHome,
+    retiredArtifacts.map((artifact) => artifact.relativePath),
+    'INSTALL_PATH_UNSAFE',
+  )
+
   const inspected = await Promise.all(artifacts.map(async (artifact) => {
     const actualContent = await readInstalledArtifact(artifact.path)
     const recordedHash = manifestState.valid
       ? manifestState.manifest.files[artifact.relativePath]
       : undefined
-    const actualMatchesRecorded = actualContent !== null &&
-      recordedHash !== undefined &&
-      sha256(actualContent) === recordedHash
-    const matchesCanonical = actualContent !== null && artifactMatches(artifact, actualContent)
     return {
       actualContent,
-      actualMatchesRecorded,
+      actualMatchesRecorded: recordedReleaseDiffers &&
+        actualContent !== null &&
+        recordedHash !== undefined &&
+        sha256(actualContent) === recordedHash,
       artifact,
-      matchesCanonical,
+      matchesCanonical: actualContent !== null && artifactMatches(artifact, actualContent),
+    }
+  }))
+  const inspectedRetired = await Promise.all(retiredArtifacts.map(async (artifact) => {
+    const actualContent = await readInstalledArtifact(artifact.path)
+    return {
+      actualContent,
+      artifact,
+      safe: actualContent === null ||
+        (recordedReleaseDiffers && sha256(actualContent) === artifact.recordedHash),
     }
   }))
 
@@ -303,6 +415,9 @@ export const install = async ({
   for (const item of inspected) {
     if (item.actualContent === null || item.matchesCanonical || item.actualMatchesRecorded) continue
     conflictingPaths.push(item.artifact.path)
+  }
+  for (const item of inspectedRetired) {
+    if (!item.safe) conflictingPaths.push(item.artifact.path)
   }
   if (!force && conflictingPaths.length > 0) {
     throw new InstallationConflictError(conflictingPaths)
@@ -320,34 +435,40 @@ export const install = async ({
       shouldChange: item.actualContent === null || !item.matchesCanonical,
     }))
     .filter((change) => change.shouldChange)
+  const retiredRemovals = inspectedRetired
+    .filter((item) => item.actualContent !== null)
+    .map((item) => ({ path: item.artifact.path }))
   const shouldWriteManifest = manifestState.content === null ||
     artifactChanges.length > 0 ||
+    retiredArtifacts.length > 0 ||
     !manifestMatchesDesiredState({
       desiredArtifacts,
       manifest: manifestState.manifest,
       packageVersion,
     })
-  const manifestContent = createManifestContent({
-    artifacts: desiredArtifacts,
-    installedAt,
-    packageVersion,
-  })
   const changes = artifactChanges.map(({ shouldChange: _shouldChange, ...change }) => change)
   if (shouldWriteManifest) {
     changes.push({
-      content: manifestContent,
+      content: createManifestContent({
+        artifacts: desiredArtifacts,
+        installedAt,
+        packageVersion,
+      }),
       hadOriginal: manifestState.content !== null,
       path: manifestState.path,
     })
   }
 
-  await applyWrites(changes)
+  await applyTransaction(changes, retiredRemovals)
 
-  const changedPathSet = new Set(changes.map((change) => change.path))
-  const allPaths = [...artifacts.map((artifact) => artifact.path), manifestState.path]
+  const changedPathSet = new Set([
+    ...changes.map((change) => change.path),
+    ...retiredRemovals.map((removal) => removal.path),
+  ])
+  const currentPaths = [...artifacts.map((artifact) => artifact.path), manifestState.path]
   return {
-    changedPaths: allPaths.filter((artifactPath) => changedPathSet.has(artifactPath)),
-    unchangedPaths: allPaths.filter((artifactPath) => !changedPathSet.has(artifactPath)),
+    changedPaths: [...changedPathSet],
+    unchangedPaths: currentPaths.filter((artifactPath) => !changedPathSet.has(artifactPath)),
   }
 }
 
@@ -364,8 +485,26 @@ export const uninstall = async ({
   force = false,
   home = os.homedir(),
 } = {}) => {
-  const { artifacts } = await installationArtifacts({ home, installedAt: new Date(0) })
-  const manifestState = await readManifest(home)
+  const managedHome = await resolveManagedHome(home, false)
+  const { artifacts, packageVersion } = await installationArtifacts({
+    home: managedHome,
+    installedAt: new Date(0),
+  })
+  await assertManagedPathsAreSafe(
+    managedHome,
+    [...artifacts.map((artifact) => artifact.relativePath), manifestRelativePath],
+    'UNINSTALL_PATH_UNSAFE',
+  )
+  const manifestState = await readManifest(managedHome)
+  const recordedReleaseDiffers = manifestState.valid &&
+    manifestState.manifest.packageVersion !== packageVersion
+  const retiredArtifacts = retiredArtifactsFrom(managedHome, manifestState, artifacts)
+  await assertManagedPathsAreSafe(
+    managedHome,
+    retiredArtifacts.map((artifact) => artifact.relativePath),
+    'UNINSTALL_PATH_UNSAFE',
+  )
+
   const inspected = await Promise.all(artifacts.map(async (artifact) => {
     const actualContent = await readInstalledArtifact(artifact.path)
     const recordedHash = manifestState.valid
@@ -375,8 +514,17 @@ export const uninstall = async ({
       actualContent,
       artifact,
       safe: actualContent === null ||
-        (recordedHash !== undefined && sha256(actualContent) === recordedHash) ||
+        (recordedReleaseDiffers && recordedHash !== undefined && sha256(actualContent) === recordedHash) ||
         artifactMatches(artifact, actualContent),
+    }
+  }))
+  const inspectedRetired = await Promise.all(retiredArtifacts.map(async (artifact) => {
+    const actualContent = await readInstalledArtifact(artifact.path)
+    return {
+      actualContent,
+      artifact,
+      safe: actualContent === null ||
+        (recordedReleaseDiffers && sha256(actualContent) === artifact.recordedHash),
     }
   }))
 
@@ -384,22 +532,27 @@ export const uninstall = async ({
   if (manifestState.content !== null && !manifestState.valid) {
     conflictingPaths.push(manifestState.path)
   }
-  for (const item of inspected) {
+  for (const item of [...inspected, ...inspectedRetired]) {
     if (!item.safe) conflictingPaths.push(item.artifact.path)
   }
   if (!force && conflictingPaths.length > 0) {
     throw new UninstallConflictError(conflictingPaths)
   }
 
+  const installedArtifacts = [...inspected, ...inspectedRetired]
+    .filter((item) => item.actualContent !== null)
+    .map((item) => ({ path: item.artifact.path }))
   const allInstalled = [
-    ...inspected
-      .filter((item) => item.actualContent !== null)
-      .map((item) => ({ path: item.artifact.path })),
+    ...installedArtifacts,
     ...(manifestState.content === null ? [] : [{ path: manifestState.path }]),
   ]
   await applyRemovals(allInstalled)
 
-  const allPaths = [...artifacts.map((artifact) => artifact.path), manifestState.path]
+  const allPaths = [
+    ...artifacts.map((artifact) => artifact.path),
+    ...retiredArtifacts.map((artifact) => artifact.path),
+    manifestState.path,
+  ]
   const removedPathSet = new Set(allInstalled.map((item) => item.path))
   return {
     missingPaths: allPaths.filter((artifactPath) => !removedPathSet.has(artifactPath)),
@@ -408,11 +561,17 @@ export const uninstall = async ({
 }
 
 export const checkInstallation = async ({ home = os.homedir() } = {}) => {
+  const managedHome = await resolveManagedHome(home, false)
   const { artifacts, packageVersion } = await installationArtifacts({
-    home,
+    home: managedHome,
     installedAt: new Date(0),
   })
-  const manifestState = await readManifest(home)
+  await assertManagedPathsAreSafe(
+    managedHome,
+    [...artifacts.map((artifact) => artifact.relativePath), manifestRelativePath],
+    'CHECK_PATH_UNSAFE',
+  )
+  const manifestState = await readManifest(managedHome)
   const mismatchedPaths = new Set()
   const missingPaths = []
 

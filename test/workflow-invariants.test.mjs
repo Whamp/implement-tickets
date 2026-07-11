@@ -16,7 +16,7 @@ const loadHelpers = async () => {
     .slice(0, bootstrapOffset)
     .replace(/^export const meta =/u, 'const meta =')
   const context = vm.createContext({ args: {}, cwd: repositoryRoot })
-  new vm.Script(`${helperSource}\nglobalThis.helpers = {\n  allowedCompletionKeys,\n  preparedWaveIsCoherent,\n  remediationTransitionIsCoherent,\n}\n`).runInContext(context)
+  new vm.Script(`${helperSource}\nglobalThis.helpers = {\n  allowedCompletionKeys,\n  preparedWaveIsCoherent,\n  remediationTransitionIsCoherent,\n  stateTransitionIsCoherent,\n}\n`).runInContext(context)
   return context.helpers
 }
 
@@ -48,7 +48,7 @@ const ticket = ({
 const stateWith = (tickets) => ({
   allDone: false,
   baseBranch: 'main',
-  baseSha: 'BASE',
+  baseSha: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
   coordinatorBranch: 'epic/parent',
   coordinatorWorktree: '/worktrees/parent/coordinator',
   ok: true,
@@ -65,8 +65,8 @@ test('prepared wave binds every assignment to graph metadata and captured HEAD',
   const tickets = [ticket({ key: 'T' }), ticket({ key: 'U' })]
   const state = stateWith(tickets)
   const waveTarget = {
-    baseSha: 'BASE',
-    candidateSha: 'COORDINATOR_HEAD',
+    baseSha: state.baseSha,
+    candidateSha: 'cccccccccccccccccccccccccccccccccccccccc',
     clean: true,
     ok: true,
     worktree: state.coordinatorWorktree,
@@ -87,8 +87,12 @@ test('prepared wave binds every assignment to graph metadata and captured HEAD',
   }
   const validated = {
     assignments: prepared.prepared,
+    coordinatorBranch: state.coordinatorBranch,
+    coordinatorHead: waveTarget.candidateSha,
+    coordinatorWorktree: state.coordinatorWorktree,
     ok: true,
     reason: '',
+    userCheckoutUnchanged: true,
   }
 
   assert.equal(preparedWaveIsCoherent(state, tickets, prepared, validated, waveTarget), true)
@@ -118,12 +122,51 @@ test('prepared wave binds every assignment to graph metadata and captured HEAD',
     validated,
     waveTarget,
   ), false)
+  const coordinatorReuse = {
+    ...prepared,
+    prepared: [
+      {
+        ...prepared.prepared[0],
+        branch: state.coordinatorBranch,
+        worktree: state.coordinatorWorktree,
+      },
+      prepared.prepared[1],
+    ],
+  }
+  assert.equal(preparedWaveIsCoherent(
+    state,
+    tickets,
+    coordinatorReuse,
+    { ...validated, assignments: coordinatorReuse.prepared },
+    waveTarget,
+  ), false)
+  const relativeWorktree = {
+    ...prepared,
+    prepared: [
+      { ...prepared.prepared[0], worktree: 'relative/worktree' },
+      prepared.prepared[1],
+    ],
+  }
+  assert.equal(preparedWaveIsCoherent(
+    state,
+    tickets,
+    relativeWorktree,
+    { ...validated, assignments: relativeWorktree.prepared },
+    waveTarget,
+  ), false)
+  assert.equal(preparedWaveIsCoherent(
+    state,
+    tickets,
+    prepared,
+    { ...validated, coordinatorHead: 'dddddddddddddddddddddddddddddddddddddddd' },
+    waveTarget,
+  ), false)
 })
 
 test('integration completion is limited to the source remediation chain', async () => {
   const { allowedCompletionKeys } = await loadHelpers()
   const state = stateWith([
-    ticket({ key: 'T' }),
+    ticket({ blockedBy: ['R1'], key: 'T', status: 'blocked' }),
     ticket({
       blockedBy: ['R2'],
       chainRootKey: 'T',
@@ -140,10 +183,38 @@ test('integration completion is limited to the source remediation chain', async 
       kind: 'remediation',
       remediationDepth: 2,
     }),
+    ticket({
+      chainRootKey: 'T',
+      continuationBaseSha: 'SIBLING',
+      key: 'SIBLING',
+      kind: 'remediation',
+      remediationDepth: 2,
+    }),
     ticket({ key: 'U' }),
   ])
 
   assert.deepEqual([...allowedCompletionKeys(state, 'R2')], ['R1', 'R2', 'T'])
+})
+
+test('state transition preserves immutable identity for every existing ticket', async () => {
+  const { stateTransitionIsCoherent } = await loadHelpers()
+  const remediation = ticket({
+    chainRootKey: 'T',
+    continuationBaseSha: 'CANDIDATE',
+    key: 'R1',
+    kind: 'remediation',
+    remediationDepth: 1,
+  })
+  const before = stateWith([
+    ticket({ blockedBy: ['R1'], key: 'T', status: 'blocked' }),
+    remediation,
+  ])
+  const after = stateWith([
+    ticket({ blockedBy: ['R1'], key: 'T', status: 'blocked' }),
+    { ...remediation, continuationBaseSha: 'REWRITTEN' },
+  ])
+
+  assert.equal(stateTransitionIsCoherent(before, after, [], []), false)
 })
 
 test('remediation transition proves exact insertion and source blocking', async () => {
@@ -151,7 +222,7 @@ test('remediation transition proves exact insertion and source blocking', async 
   const before = stateWith([ticket({ key: 'T' })])
   const action = {
     chainRootKey: 'T',
-    continuationBaseSha: 'CANDIDATE',
+    continuationBaseSha: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
     createdTicketKey: 'R1',
     createdTicketReference: 'issue:R1',
     details: '',
@@ -163,7 +234,7 @@ test('remediation transition proves exact insertion and source blocking', async 
     ticket({ blockedBy: ['R1'], key: 'T', status: 'blocked' }),
     ticket({
       chainRootKey: 'T',
-      continuationBaseSha: 'CANDIDATE',
+      continuationBaseSha: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
       key: 'R1',
       kind: 'remediation',
       remediationDepth: 1,

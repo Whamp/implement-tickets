@@ -135,10 +135,22 @@ const preparedSchema = {
 const preparedValidationSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['ok', 'assignments', 'reason'],
+  required: [
+    'ok',
+    'assignments',
+    'coordinatorBranch',
+    'coordinatorWorktree',
+    'coordinatorHead',
+    'userCheckoutUnchanged',
+    'reason',
+  ],
   properties: {
     ok: { type: 'boolean' },
     assignments: preparedSchema.properties.prepared,
+    coordinatorBranch: { type: 'string' },
+    coordinatorWorktree: { type: 'string' },
+    coordinatorHead: { type: 'string' },
+    userCheckoutUnchanged: { type: 'boolean' },
     reason: { type: 'string' },
   },
 }
@@ -329,6 +341,14 @@ const nonBlockingFindings = (reviews) => reviews
 
 const ticketByKey = (state, key) => state.tickets.find((ticket) => ticket.key === key)
 
+const gitShaIsValid = (value) => typeof value === 'string' && /^[a-f0-9]{40}([a-f0-9]{24})?$/u.test(value)
+
+const absolutePathIsValid = (value) => typeof value === 'string' && (
+  value.startsWith('/') ||
+  /^[A-Za-z]:[\\/]/u.test(value) ||
+  value.startsWith('\\\\')
+)
+
 const sameKeys = (left, right) => {
   if (left.length !== right.length) return false
   if (new Set(left).size !== left.length || new Set(right).size !== right.length) return false
@@ -349,8 +369,13 @@ const assignmentSignature = (assignment) => JSON.stringify([
 ])
 
 const preparedWaveIsCoherent = (state, runnableTickets, prepared, validated, waveTarget) => {
-  if (!state || !prepared || !validated || !validated.ok || !waveTarget || !waveTarget.ok || !waveTarget.clean) return false
-  if (waveTarget.baseSha !== state.baseSha || waveTarget.worktree !== state.coordinatorWorktree || !waveTarget.candidateSha) return false
+  if (!state || !prepared || !validated || !validated.ok || !validated.userCheckoutUnchanged || !waveTarget || !waveTarget.ok || !waveTarget.clean) return false
+  if (waveTarget.baseSha !== state.baseSha ||
+      waveTarget.worktree !== state.coordinatorWorktree ||
+      !gitShaIsValid(waveTarget.candidateSha) ||
+      validated.coordinatorBranch !== state.coordinatorBranch ||
+      validated.coordinatorWorktree !== state.coordinatorWorktree ||
+      validated.coordinatorHead !== waveTarget.candidateSha) return false
   if (!sameKeys(runnableTickets.map((ticket) => ticket.key), state.runnableKeys)) return false
   const accountedKeys = [
     ...prepared.prepared.map((assignment) => assignment.key),
@@ -363,7 +388,11 @@ const preparedWaveIsCoherent = (state, runnableTickets, prepared, validated, wav
 
   for (const assignment of prepared.prepared) {
     const ticket = runnableTickets.find((item) => item.key === assignment.key)
-    if (!ticket || !assignment.branch || !assignment.worktree) return false
+    if (!ticket || !assignment.branch ||
+        assignment.branch === state.coordinatorBranch ||
+        !absolutePathIsValid(assignment.worktree) ||
+        assignment.worktree === state.coordinatorWorktree ||
+        !gitShaIsValid(assignment.baseSha)) return false
     const expectedBaseSha = ticket.kind === 'remediation'
       ? ticket.continuationBaseSha
       : waveTarget.candidateSha
@@ -381,17 +410,29 @@ const preparedWaveIsCoherent = (state, runnableTickets, prepared, validated, wav
 
 const allowedCompletionKeys = (state, sourceKey) => {
   const source = ticketByKey(state, sourceKey)
-  if (!source || !source.chainRootKey) return []
-  return state.tickets
-    .filter((ticket) => ticket.chainRootKey === source.chainRootKey && ticket.status !== 'complete')
-    .map((ticket) => ticket.key)
-    .sort()
+  if (!source || !source.chainRootKey || source.status === 'complete') return []
+  const byKey = new Map(state.tickets.map((ticket) => [ticket.key, ticket]))
+  const allowed = new Set([sourceKey])
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const ticket of state.tickets) {
+      if (ticket.status === 'complete' || ticket.chainRootKey !== source.chainRootKey || allowed.has(ticket.key)) continue
+      const incompleteBlockers = ticket.blockedBy.filter((key) => byKey.get(key)?.status !== 'complete')
+      if (incompleteBlockers.length > 0 && incompleteBlockers.every((key) => allowed.has(key))) {
+        allowed.add(ticket.key)
+        changed = true
+      }
+    }
+  }
+  return [...allowed].sort()
 }
 
 const remediationActionMatches = (action, expectation) => {
   if (!action || action.sourceKey !== expectation.sourceKey ||
       action.continuationBaseSha !== expectation.continuationBaseSha ||
       action.chainRootKey !== expectation.chainRootKey) return false
+  if (!gitShaIsValid(action.continuationBaseSha)) return false
   if (expectation.nextDepth > maxRemediationDepth) {
     return action.status === 'needs_attention' &&
       !action.createdTicketKey &&
@@ -448,7 +489,7 @@ const remediationTransitionIsCoherent = (before, after, remediations) => {
 }
 
 const graphIsCoherent = (state) => {
-  if (!state || !state.ok) return false
+  if (!state || !state.ok || !gitShaIsValid(state.baseSha) || !absolutePathIsValid(state.coordinatorWorktree)) return false
   const keys = state.tickets.map((ticket) => ticket.key)
   const keySet = new Set(keys)
   const byKey = new Map(state.tickets.map((ticket) => [ticket.key, ticket]))
@@ -456,8 +497,8 @@ const graphIsCoherent = (state) => {
   if (state.tickets.some((ticket) => !Number.isInteger(ticket.remediationDepth) || ticket.remediationDepth < 0 || ticket.remediationDepth > maxRemediationDepth)) return false
   if (state.tickets.some((ticket) => !ticket.chainRootKey)) return false
   if (state.tickets.some((ticket) => ticket.kind === 'implementation' && (ticket.chainRootKey !== ticket.key || ticket.remediationDepth !== 0 || ticket.continuationBaseSha))) return false
-  if (state.tickets.some((ticket) => ticket.kind === 'remediation' && (!ticket.continuationBaseSha || ticket.remediationDepth < 1 || (ticket.chainRootKey !== 'parent' && byKey.get(ticket.chainRootKey)?.kind !== 'implementation')))) return false
-  if (state.tickets.some((ticket) => ticket.status === 'complete' && (!ticket.integratedCandidateSha || !ticket.coordinatorSha || !ticket.verificationPassed))) return false
+  if (state.tickets.some((ticket) => ticket.kind === 'remediation' && (!gitShaIsValid(ticket.continuationBaseSha) || ticket.remediationDepth < 1 || (ticket.chainRootKey !== 'parent' && byKey.get(ticket.chainRootKey)?.kind !== 'implementation')))) return false
+  if (state.tickets.some((ticket) => ticket.status === 'complete' && (!gitShaIsValid(ticket.integratedCandidateSha) || !gitShaIsValid(ticket.coordinatorSha) || !ticket.verificationPassed))) return false
   if (state.tickets.some((ticket) => ticket.status !== 'complete' && ticket.verificationPassed)) return false
   if (state.tickets.some((ticket) => ticket.blockedBy.some((blocker) => !keySet.has(blocker)))) return false
   if (state.runnableKeys.some((key) => !keySet.has(key))) return false
@@ -465,6 +506,10 @@ const graphIsCoherent = (state) => {
     const ticket = byKey.get(key)
     return !ticket || ticket.status !== 'open' || ticket.blockedBy.some((blocker) => byKey.get(blocker).status !== 'complete')
   })) return false
+  const expectedRunnableKeys = state.tickets
+    .filter((ticket) => ticket.status === 'open' && ticket.blockedBy.every((blocker) => byKey.get(blocker).status === 'complete'))
+    .map((ticket) => ticket.key)
+  if (!sameKeys(state.runnableKeys, expectedRunnableKeys)) return false
   if (state.allDone && (state.runnableKeys.length > 0 || state.tickets.some((ticket) => ticket.status !== 'complete'))) return false
 
   const visiting = new Set()
@@ -488,6 +533,15 @@ const stateTransitionIsCoherent = (before, after, integrations, remediations = [
   const afterByKey = new Map(after.tickets.map((ticket) => [ticket.key, ticket]))
   if (before.tickets.some((ticket) => !afterByKey.has(ticket.key))) return false
   if (after.tickets.some((ticket) => !beforeByKey.has(ticket.key) && ticket.kind !== 'remediation')) return false
+  if (before.tickets.some((ticket) => {
+    const current = afterByKey.get(ticket.key)
+    return ticket.title !== current.title ||
+      ticket.reference !== current.reference ||
+      ticket.kind !== current.kind ||
+      ticket.remediationDepth !== current.remediationDepth ||
+      ticket.continuationBaseSha !== current.continuationBaseSha ||
+      ticket.chainRootKey !== current.chainRootKey
+  })) return false
   if (before.tickets.some((ticket) => {
     if (ticket.status !== 'complete') return false
     const current = afterByKey.get(ticket.key)
@@ -652,7 +706,7 @@ Captured wave-start coordinator SHA: ${waveTarget.candidateSha}
 Runnable graph tickets: ${JSON.stringify(runnableTickets)}
 Prepared result: ${JSON.stringify(prepared)}
 
-Stay read-only. Re-observe every prepared branch and worktree. Require unique branches and absolute worktrees, exact graph metadata, and a clean branch tip equal to its declared base before implementation begins. Normal tickets must use the captured wave-start coordinator SHA. Remediation tickets must use their graph continuationBaseSha. Failed keys must have no prepared assignment. Return coordinator-observed assignments with every field from the prepared schema. Do not modify Git, tracker state, or product code.
+Stay read-only. Re-observe every prepared branch and worktree. Require unique non-coordinator branches and absolute non-coordinator worktrees, exact graph metadata, SHA-shaped bases, and a clean branch tip equal to its declared base before implementation begins. Independently re-read the coordinator branch/worktree and actual HEAD; they must still equal ${state.coordinatorBranch}, ${state.coordinatorWorktree}, and ${waveTarget.candidateSha}. Normal tickets must use that captured coordinator SHA. Remediation tickets must use their graph continuationBaseSha. Failed keys must have no prepared assignment. Return coordinator-observed assignments plus coordinatorBranch, coordinatorWorktree, coordinatorHead, and userCheckoutUnchanged. Do not modify Git, tracker state, or product code.
 `, {
       label: `validate preparation ${wave}`,
       tier: 'small',
@@ -713,7 +767,7 @@ Verify the expected worktree exists, is clean, is on the expected branch, and it
     const candidates = validationResults
       .map((result, index) => {
         const expected = prepared.prepared[index]
-        if (!result || !result.ok || !result.candidateSha) return null
+        if (!result || !result.ok || !gitShaIsValid(result.candidateSha)) return null
         if (result.key !== expected.key || result.branch !== expected.branch || result.worktree !== expected.worktree || result.baseSha !== expected.baseSha) return null
         return { ...expected, candidateSha: result.candidateSha }
       })
@@ -1040,7 +1094,7 @@ Verify the worktree exists, is clean, is on the expected branch, and has a non-e
       !finalTarget.clean ||
       finalTarget.baseSha !== state.baseSha ||
       finalTarget.worktree !== state.coordinatorWorktree ||
-      !finalTarget.candidateSha) {
+      !gitShaIsValid(finalTarget.candidateSha)) {
     finalReviewHistory.push({ round: finalReviewRound, target: finalTarget, reviews: [] })
     break
   }
@@ -1169,7 +1223,7 @@ const deterministicReleaseReady = Boolean(
   acceptedReleaseTarget &&
   acceptedReleaseTarget.baseSha === state.baseSha &&
   acceptedReleaseTarget.worktree === state.coordinatorWorktree &&
-  acceptedReleaseTarget.candidateSha,
+  gitShaIsValid(acceptedReleaseTarget.candidateSha),
 )
 
 let publishResult = {

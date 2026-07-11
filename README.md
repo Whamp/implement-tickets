@@ -89,9 +89,9 @@ Run `/reload` in Pi after installation. The installer creates:
 ~/.pi/agents/ticket-final-reporter.md
 ```
 
-The installation manifest records the SHA-256 hash of every generated artifact. That lets a later release upgrade untouched older files while refusing to overwrite local modifications. A manifest-less installation is adopted only when every existing file already matches the current canonical release.
+The installation manifest records the package version and SHA-256 hash of every generated artifact. A later package version can upgrade or retire untouched files from the recorded release while refusing local modifications. Same-version files must still match canonical content, so editing a manifest hash cannot bless a local change. A manifest-less installation is adopted only when every existing file already matches the current canonical release.
 
-The installer stages all changes before replacing files and rolls back committed replacements when a later write fails. It refuses to overwrite modified files. To intentionally replace local changes:
+The installer rejects symlinked managed directories and trusts only product-owned relative paths under `.pi/agents` and `.pi/workflows`. It stages all writes and retired-file removals before replacing files, then rolls back committed changes when a later operation fails. It refuses to overwrite modified files. To intentionally replace local changes:
 
 ```bash
 npm run install:global -- --force

@@ -16,6 +16,7 @@ This repository is canonical. Never make primary edits in generated files under 
 - Preserve exact ticket, branch, worktree, and SHA validation.
 - Represent P0/P1 fixes as durable remediation tickets, not private fixer loops.
 - Never add machine-specific absolute paths to workflow or role files.
+- Bump the package version when a released generated artifact changes; upgrade provenance is version-bound.
 
 ## Generated installation
 
