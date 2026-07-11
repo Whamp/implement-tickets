@@ -366,11 +366,10 @@ const needsAttentionVerificationSchema = {
 const remediationActionSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['status', 'createdTicketKey', 'createdTicketReference', 'details'],
+  required: ['status', 'createdTicketKey', 'details'],
   properties: {
     status: { type: 'string', enum: ['remediation_created', 'needs_attention'] },
     createdTicketKey: { type: 'string' },
-    createdTicketReference: { type: 'string' },
     details: { type: 'string' },
   },
 }
@@ -650,7 +649,6 @@ const bindNeedsAttentionEvidence = (action, sourceKey) => ({
   status: 'needs_attention',
   sourceKey,
   createdTicketKey: '',
-  createdTicketReference: '',
   details: action?.details || 'Durable needs-attention evidence was independently verified.',
 })
 
@@ -658,11 +656,13 @@ const bindRemediationAction = (action, expectation) => {
   if (!action || !gitShaIsValid(expectation.continuationBaseSha)) return null
   const depthCapReached = expectation.nextDepth > maxRemediationDepth
   const statusMatches = depthCapReached
-    ? action.status === 'needs_attention' && !action.createdTicketKey && !action.createdTicketReference
-    : action.status === 'remediation_created' && Boolean(action.createdTicketKey) && Boolean(action.createdTicketReference)
+    ? action.status === 'needs_attention' && !action.createdTicketKey
+    : action.status === 'remediation_created' && Boolean(action.createdTicketKey)
   if (!statusMatches) return null
   return {
-    ...action,
+    status: action.status,
+    createdTicketKey: action.createdTicketKey,
+    details: action.details,
     sourceKey: expectation.sourceKey,
     continuationBaseSha: expectation.continuationBaseSha,
     remediationDepth: depthCapReached ? maxRemediationDepth : expectation.nextDepth,
@@ -689,18 +689,16 @@ const remediationTransitionIsCoherent = (before, after, remediations) => {
     if (!parentLevel && (!sourceBefore || !sourceAfter)) return false
 
     if (action.status === 'needs_attention') {
-      if (action.createdTicketKey || action.createdTicketReference) return false
+      if (action.createdTicketKey) return false
       if (!parentLevel && sourceAfter.status !== 'needs_attention') return false
       continue
     }
 
-    if (!action.createdTicketKey || !action.createdTicketReference ||
-        !action.continuationBaseSha || !action.chainRootKey ||
+    if (!action.createdTicketKey || !action.continuationBaseSha || !action.chainRootKey ||
         !Number.isInteger(action.remediationDepth)) return false
     const created = afterByKey.get(action.createdTicketKey)
     if (beforeByKey.has(action.createdTicketKey) || !created ||
         created.kind !== 'remediation' || created.status === 'complete' ||
-        created.reference !== action.createdTicketReference ||
         created.continuationBaseSha !== action.continuationBaseSha ||
         created.remediationDepth !== action.remediationDepth ||
         created.chainRootKey !== action.chainRootKey) return false
@@ -1230,7 +1228,7 @@ ${JSON.stringify(indexedReviews.find((review) => review.axis === 'Spec'))}
 
 Aggregate all P0/P1 findings into one ticket, but preserve the two reports under \`## Standards\` and \`## Spec\` headings, verbatim or lightly cleaned. Do **not** merge or rerank findings across axes. End the review-evidence section with total findings and the worst issue within each axis; do not pick one winner across axes. Link the source ticket, exact reviewed SHA, both review reports, required changes, and original acceptance criteria. Record continuationBaseSha=${candidate.candidateSha}, chainRootKey=${ticket.chainRootKey}, and remediationDepth=${ticket.remediationDepth + 1}. Make the source ticket blocked by the remediation ticket. Do not mark either complete and do not change product code.
 
-Return only status, the newly created ticket key/reference (empty at the depth cap), and details. The workflow owns source key, continuation SHA, depth, and chain root; do not echo them. If creating this ticket would exceed depth ${maxRemediationDepth}, create no ticket, mark the entire chain needs-attention, return status=needs_attention with empty created-ticket fields, and preserve all branches/worktrees.
+Return only status, the newly created ticket key (empty at the depth cap), and details. The workflow owns source key, continuation SHA, depth, chain root, and tracker-specific ticket-reference formatting; do not echo them. If creating this ticket would exceed depth ${maxRemediationDepth}, create no ticket, mark the entire chain needs-attention, return status=needs_attention with empty created-ticket fields, and preserve all branches/worktrees.
 `, {
           label: `remediate review ${wave} ${candidate.key}`,
           tier: 'medium',
@@ -1346,7 +1344,7 @@ Maximum remediation depth: ${maxRemediationDepth}
 Candidate SHA / continuation base: ${candidate.candidateSha}
 Integration result: ${JSON.stringify(integrationFailure)}
 
-The remediation ticket must require a fresh implementer to reconcile the candidate with current coordinator state or repair the verification/provenance failure, while preserving the original acceptance criteria. Reopen the source or chain if an invalid integration prematurely marked it complete. Record continuationBaseSha=${candidate.candidateSha}, remediationDepth=${ticket.remediationDepth + 1}, chainRootKey=${ticket.chainRootKey}, and the exact integration evidence. Make the source ticket blocked by the remediation ticket. Return only status, the newly created ticket key/reference (empty at the depth cap), and details; the workflow owns source key, continuation SHA, depth, and chain root.
+The remediation ticket must require a fresh implementer to reconcile the candidate with current coordinator state or repair the verification/provenance failure, while preserving the original acceptance criteria. Reopen the source or chain if an invalid integration prematurely marked it complete. Record continuationBaseSha=${candidate.candidateSha}, remediationDepth=${ticket.remediationDepth + 1}, chainRootKey=${ticket.chainRootKey}, and the exact integration evidence. Make the source ticket blocked by the remediation ticket. Return only status, the newly created ticket key (empty at the depth cap), and details; the workflow owns source key, continuation SHA, depth, chain root, and tracker-specific ticket-reference formatting.
 
 If the depth cap would be exceeded, create no ticket, mark the chain needs-attention, and return status=needs_attention with empty created-ticket fields. Do not change product code.
 `, {
@@ -1599,7 +1597,7 @@ ${JSON.stringify(indexedFinalReviews.find((review) => review.axis === 'Spec'))}
 
 Preserve the two reports under \`## Standards\` and \`## Spec\` headings, verbatim or lightly cleaned. Do **not** merge or rerank findings across axes. End the review-evidence section with total findings and the worst issue within each axis; do not pick one winner across axes.
 
-The ticket belongs to the parent's implementation graph and must pass the normal fresh implementer plus two fresh reviewer pipeline. Record remediationDepth=${finalReviewRound}, continuationBaseSha=${finalHead}, chainRootKey=parent, and sourceKey=parent. Return only status, the newly created ticket key/reference (empty at the depth cap), and details; the workflow owns source key, continuation SHA, depth, and chain root. Do not close the parent or change product code. If round ${finalReviewRound} reaches the depth cap, create no further ticket, mark the parent coordination session needs-attention, and return status=needs_attention with empty created-ticket fields.
+The ticket belongs to the parent's implementation graph and must pass the normal fresh implementer plus two fresh reviewer pipeline. Record remediationDepth=${finalReviewRound}, continuationBaseSha=${finalHead}, chainRootKey=parent, and sourceKey=parent. Return only status, the newly created ticket key (empty at the depth cap), and details; the workflow owns source key, continuation SHA, depth, chain root, and tracker-specific ticket-reference formatting. Do not close the parent or change product code. If round ${finalReviewRound} reaches the depth cap, create no further ticket, mark the parent coordination session needs-attention, and return status=needs_attention with empty created-ticket fields.
 `, {
     label: `publish final remediation ${finalReviewRound}`,
     tier: 'medium',

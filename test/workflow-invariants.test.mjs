@@ -114,7 +114,7 @@ test('agent schemas contain observations, not workflow-owned identity echoes', a
   for (const property of ['title', 'reference', 'kind', 'remediationDepth', 'continuationBaseSha', 'chainRootKey']) {
     assert.equal(inventorySchema.properties.existingTickets.items.properties[property], undefined)
   }
-  for (const property of ['sourceKey', 'continuationBaseSha', 'remediationDepth', 'chainRootKey']) {
+  for (const property of ['sourceKey', 'createdTicketReference', 'continuationBaseSha', 'remediationDepth', 'chainRootKey']) {
     assert.equal(remediationActionSchema.properties[property], undefined)
   }
   for (const property of ['coordinatorBranch', 'coordinatorWorktree', 'coordinatorSha']) {
@@ -569,7 +569,7 @@ test('remediation transition proves exact insertion and source blocking', async 
       key: 'R1',
       kind: 'remediation',
       remediationDepth: 1,
-      reference: 'issue:R1',
+      reference: '#R1',
     }),
   ])
 
