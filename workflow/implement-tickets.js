@@ -232,10 +232,6 @@ const candidateValidationSchema = {
   type: 'object',
   additionalProperties: false,
   required: [
-    'key',
-    'branch',
-    'worktree',
-    'baseSha',
     'candidateSha',
     ...candidateValidationFactNames,
     'commitList',
@@ -243,10 +239,6 @@ const candidateValidationSchema = {
     'reason',
   ],
   properties: {
-    key: { type: 'string' },
-    branch: { type: 'string' },
-    worktree: { type: 'string' },
-    baseSha: { type: 'string' },
     candidateSha: { type: 'string' },
     worktreeExists: { type: 'boolean' },
     worktreeClean: { type: 'boolean' },
@@ -466,14 +458,10 @@ const reviewContextIsValid = (value) => value &&
   value.standardsSources.every(repositoryRelativePathIsValid) &&
   new Set(value.standardsSources).size === value.standardsSources.length
 
-const candidateValidationIsCoherent = (result, expected) =>
+const candidateValidationIsCoherent = (result, expectedBaseSha) =>
   Boolean(result) &&
-  result.key === expected.key &&
-  result.branch === expected.branch &&
-  result.worktree === expected.worktree &&
-  result.baseSha === expected.baseSha &&
   gitShaIsValid(result.candidateSha) &&
-  result.candidateSha !== expected.baseSha &&
+  result.candidateSha !== expectedBaseSha &&
   candidateValidationFactNames.every((name) => result[name] === true) &&
   reviewContextIsValid(result)
 
@@ -964,7 +952,7 @@ Expected base SHA: ${ticket.baseSha}
 Implementer result: ${JSON.stringify(implementationResults[index])}
 Repository: ${state.repoRoot}
 
-Verify and return separate boolean facts for whether the expected worktree exists, is clean, is on the expected branch, its tip descends from the expected base, its diff is non-empty, and the user's checkout is unchanged from the durable baseline. Resolve the fixed point and capture these review inputs once from the candidate worktree: \`git diff ${ticket.baseSha}...HEAD\` and \`git log ${ticket.baseSha}..HEAD --oneline\`. Return every non-empty commit-list line in exact output order; each line must retain its abbreviated hexadecimal commit ID and contain no control characters. Identify every repository file that documents coding standards, contribution rules, or agent instructions and return canonical forward-slash repository-relative paths as standardsSources. Reject absolute paths, backslashes, empty components, and \`.\` or \`..\` traversal components; return an empty list when no standards source exists. Do not judge ticket completeness, test sufficiency, or Spec conformance; those belong exclusively to the independent reviewers. A clean partial candidate with valid Git provenance must retain true provenance facts so it can reach review and durable remediation. Return only coordinator-observed values. Do not edit product code or tracker state.
+Verify and return separate boolean facts for whether the expected worktree exists, is clean, is on the expected branch, its tip descends from the expected base, its diff is non-empty, and the user's checkout is unchanged from the durable baseline. Resolve the fixed point and capture these review inputs once from the candidate worktree: \`git diff ${ticket.baseSha}...HEAD\` and \`git log ${ticket.baseSha}..HEAD --oneline\`. Return every non-empty commit-list line in exact output order; each line must retain its abbreviated hexadecimal commit ID and contain no control characters. Identify every repository file that documents coding standards, contribution rules, or agent instructions and return canonical forward-slash repository-relative paths as standardsSources. Reject absolute paths, backslashes, empty components, and \`.\` or \`..\` traversal components; return an empty list when no standards source exists. Do not judge ticket completeness, test sufficiency, or Spec conformance; those belong exclusively to the independent reviewers. A clean partial candidate with valid Git provenance must retain true provenance facts so it can reach review and durable remediation. Do not echo key, branch, worktree, or base SHA in the result; those identities are owned by the immutable assignment, not by this observer. Return only the observed candidate SHA, provenance facts, review context, and reason required by the schema. Do not edit product code or tracker state.
 `, {
         label: `validate candidate ${wave}.${index + 1} ${ticket.key}`,
         tier: 'small',
@@ -978,7 +966,7 @@ Verify and return separate boolean facts for whether the expected worktree exist
     const candidates = validationResults
       .map((result, index) => {
         const expected = prepared.prepared[index]
-        if (!candidateValidationIsCoherent(result, expected)) return null
+        if (!candidateValidationIsCoherent(result, expected.baseSha)) return null
         return {
           ...expected,
           candidateSha: result.candidateSha,
@@ -1088,7 +1076,7 @@ Do not change product code. Preserve any existing branch/worktree and add durabl
       const assignment = prepared.prepared[index]
       const implementation = implementationResults[index]
       const validation = validationResults[index]
-      const assignmentMatches = candidateValidationIsCoherent(validation, assignment)
+      const assignmentMatches = candidateValidationIsCoherent(validation, assignment.baseSha)
       if (assignmentMatches) continue
       dispositions.push(await agent(`
 Record ticket ${assignment.key} as blocked or needs-attention because its implementer did not produce a coordinator-validated clean commit.
