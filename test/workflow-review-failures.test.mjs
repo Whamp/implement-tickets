@@ -160,13 +160,18 @@ const ticketReviewResponder = (
     return {
       baseSha: waveSha,
       branch: preparedTicketAssignment.branch,
+      branchMatches: true,
       candidateSha,
       commitList: [`${candidateSha.slice(0, 7)} Implement ticket T`],
+      descendsFromBase: true,
       key: 'T',
-      ok: true,
+      nonEmptyDiff: true,
       reason: '',
       standardsSources: ['AGENTS.md'],
+      userCheckoutUnchanged: true,
       worktree: preparedTicketAssignment.worktree,
+      worktreeClean: true,
+      worktreeExists: true,
     }
   }
   if (label === 'standards 1.1 T') {
@@ -198,6 +203,58 @@ const ticketReviewResponder = (
   throw new Error(`Unexpected agent call: ${label}`)
 }
 
+test('clean incomplete candidate reaches review instead of implementation failure', async () => {
+  const afterReviewFailure = graphState({
+    runnable: false,
+    status: 'needs_attention',
+    stopReason: 'Ticket T needs a fresh Spec reviewer.',
+  })
+  const continueResponder = ticketReviewResponder(afterReviewFailure)
+
+  const { calls } = await runWorkflow(async (label, options, prompt) => {
+    if (label === 'implement 1.1 T') {
+      return {
+        baseSha: waveSha,
+        blockers: ['Remaining acceptance criteria require remediation.'],
+        branch: preparedTicketAssignment.branch,
+        candidateSha,
+        key: 'T',
+        ok: false,
+        status: 'incomplete',
+        summary: 'Committed a valid but incomplete vertical slice.',
+        verification: ['targeted tests passed'],
+        worktree: preparedTicketAssignment.worktree,
+      }
+    }
+    if (label === 'validate candidate 1.1 T') {
+      return {
+        baseSha: waveSha,
+        branch: preparedTicketAssignment.branch,
+        branchMatches: true,
+        candidateSha,
+        commitList: [`${candidateSha.slice(0, 7)} Implement ticket T slice`],
+        descendsFromBase: true,
+        key: 'T',
+        nonEmptyDiff: true,
+        reason: 'Git provenance is valid; Spec completeness belongs to review.',
+        standardsSources: ['AGENTS.md'],
+        userCheckoutUnchanged: true,
+        worktree: preparedTicketAssignment.worktree,
+        worktreeClean: true,
+        worktreeExists: true,
+      }
+    }
+    if (label === 'record implementation failure 1 T') {
+      return action('T', candidateSha, [], 'Candidate was incorrectly blocked before review.')
+    }
+    return continueResponder(label, options, prompt)
+  })
+
+  assert.notEqual(callFor(calls, 'standards 1.1 T'), undefined)
+  assert.notEqual(callFor(calls, 'spec 1.1 T'), undefined)
+  assert.equal(callFor(calls, 'record implementation failure 1 T'), undefined)
+})
+
 test('missing ticket reviewer becomes operational needs-attention without remediation', async () => {
   const afterReviewFailure = graphState({
     runnable: false,
@@ -210,6 +267,9 @@ test('missing ticket reviewer becomes operational needs-attention without remedi
   assert.equal(result.ok, false)
   assert.equal(result.verdict, 'hold')
   assert.equal(callFor(calls, 'implement 1.1 T').options.tier, 'medium')
+  assert.match(callFor(calls, 'implement 1.1 T').prompt, /Begin every shell command with `cd \/worktrees\/parent\/T &&`/u)
+  assert.match(callFor(calls, 'implement 1.1 T').prompt, /do not stop merely because it implements only a slice/u)
+  assert.match(callFor(calls, 'validate candidate 1.1 T').prompt, /Do not judge ticket completeness, test sufficiency, or Spec conformance/u)
   assert.equal(callFor(calls, 'standards 1.1 T').options.tier, 'medium')
   assert.equal(callFor(calls, 'spec 1.1 T').options.tier, 'big')
   assert.equal(callFor(calls, 'spec 1.1 T').options.retries, 2)

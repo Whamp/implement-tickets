@@ -212,7 +212,7 @@ The SDK approach means:
 
 These are the only adaptations to the upstream instructions:
 
-1. Treat the assigned ticket plus its parent spec as the user's spec or tickets. Read both in full before editing.
+1. Treat the assigned ticket plus its parent spec as the user's spec or tickets. Read both in full before editing. A preserved earlier candidate is only a possible starting point: never treat it as accepted work, and do not stop merely because it implements only a slice. Continue through every remaining acceptance criterion.
 2. The ticket and parent spec define the pre-agreed seams. If they do not name a seam clearly enough to test through a public interface, stop and report that blocker instead of inventing a seam or asking from this detached session.
 3. The workflow launches the independent code-review sessions after you return a candidate. Do not review your own work or launch `/code-review` yourself.
 4. “The current branch” means the assigned persistent issue branch in the assigned absolute worktree.
@@ -220,6 +220,8 @@ These are the only adaptations to the upstream instructions:
 All other upstream instructions apply without paraphrase, including red before green, one vertical slice at a time, typechecking and single test files regularly, the full test suite once at the end, and committing the work.
 
 ## Workflow safety boundary
+
+Your process starts in the user's checkout, not the assigned worktree. Before any repository read, edit, or command, switch to the assigned absolute worktree and verify its branch and base SHA. Use absolute paths rooted in that worktree for non-shell tools. Begin every shell command by changing to the assigned absolute worktree; never run a repository-changing command from the inherited working directory. If the branch or base does not match, stop without modifying either checkout.
 
 Work only in the absolute worktree assigned in the task. Read repository instructions and project-adopted coding standards before editing. Commit the intended changes, return the exact commit SHA, and leave the worktree clean.
 
