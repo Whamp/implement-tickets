@@ -668,6 +668,10 @@ const remediationTransitionIsCoherent = (before, after, remediations) => {
   return true
 }
 
+const ticketIsRunnable = (ticket, byKey) =>
+  ['open', 'claimed'].includes(ticket.status) &&
+  ticket.blockedBy.every((blocker) => byKey.get(blocker).status === 'complete')
+
 const graphIsCoherent = (state) => {
   if (!state || !state.ok || !gitShaIsValid(state.baseSha) || !absolutePathIsValid(state.coordinatorWorktree)) return false
   const keys = state.tickets.map((ticket) => ticket.key)
@@ -684,10 +688,10 @@ const graphIsCoherent = (state) => {
   if (state.runnableKeys.some((key) => !keySet.has(key))) return false
   if (state.runnableKeys.some((key) => {
     const ticket = byKey.get(key)
-    return !ticket || ticket.status !== 'open' || ticket.blockedBy.some((blocker) => byKey.get(blocker).status !== 'complete')
+    return !ticket || !ticketIsRunnable(ticket, byKey)
   })) return false
   const expectedRunnableKeys = state.tickets
-    .filter((ticket) => ticket.status === 'open' && ticket.blockedBy.every((blocker) => byKey.get(blocker).status === 'complete'))
+    .filter((ticket) => ticketIsRunnable(ticket, byKey))
     .map((ticket) => ticket.key)
   if (!sameKeys(state.runnableKeys, expectedRunnableKeys)) return false
   if (state.allDone && (state.runnableKeys.length > 0 || state.tickets.some((ticket) => ticket.status !== 'complete'))) return false
@@ -762,9 +766,9 @@ Coordinator branch: ${state.coordinatorBranch}
 Pinned base: ${state.baseSha}
 Maximum remediation depth: ${maxRemediationDepth}
 
-Read the parent spec, every scoped implementation ticket, all tracker comments/relationships, and current Git/worktree state. Include remediation tickets created by this workflow. A ticket is runnable only when it is open, unclaimed by another coordinator, and all completion blockers are integrated and verified. A remediation ticket may be runnable from its continuationBaseSha while its source ticket remains incomplete. Preserve the pinned base SHA from the supplied state.
+Read the parent spec, every scoped implementation ticket, all tracker comments/relationships, and current Git/worktree state. Include remediation tickets created by this workflow. A ticket is runnable only when it is open or claimed by this exact coordinator, unclaimed by another coordinator, and all completion blockers are integrated and verified. A remediation ticket may be runnable from its continuationBaseSha while its source ticket remains incomplete. Preserve the pinned base SHA from the supplied state.
 
-Normalize status to open, claimed, blocked, complete, or needs_attention; normalize kind to implementation or remediation. Return unique keys and include every referenced blocker. Every implementation ticket must have remediationDepth=0, an empty continuationBaseSha, and chainRootKey equal to its own key. Every remediation ticket must have depth 1..${maxRemediationDepth}, a non-empty continuationBaseSha, and chainRootKey equal to its original implementation ticket key or parent for final integrated remediation. For every complete ticket, reconstruct and return its integratedCandidateSha, coordinatorSha, and verificationPassed evidence from Git plus durable tracker records; use empty SHAs and false for incomplete tickets. Set allDone only when every scoped original and remediation ticket is complete because it was integrated and verified. If work remains but runnableKeys is empty, explain why in stopReason. Do not edit product code.
+Normalize status to open, claimed, blocked, complete, or needs_attention. Use claimed only for a ticket claimed by this exact coordinator with its stable marker; a ticket claimed by another coordinator is not runnable. Normalize kind to implementation or remediation. Return unique keys and include every referenced blocker. Every implementation ticket must have remediationDepth=0, an empty continuationBaseSha, and chainRootKey equal to its own key. Every remediation ticket must have depth 1..${maxRemediationDepth}, a non-empty continuationBaseSha, and chainRootKey equal to its original implementation ticket key or parent for final integrated remediation. For every complete ticket, reconstruct and return its integratedCandidateSha, coordinatorSha, and verificationPassed evidence from Git plus durable tracker records; use empty SHAs and false for incomplete tickets. Set allDone only when every scoped original and remediation ticket is complete because it was integrated and verified. If work remains but runnableKeys is empty, explain why in stopReason. Do not edit product code.
 `
 
 phase('Bootstrap')
@@ -786,7 +790,7 @@ Work from the current repository, but never modify the user's checkout. Read the
 
 Fetch the default remote without force. Pin the remote default branch to an exact base SHA. Create or safely reuse a persistent coordinator branch and sibling coordinator worktree outside the user's checkout. Use a project-local .worktrees root only when it is already ignored; otherwise use ~/worktrees/<repo>/<parent-slug>/. Do not use pi-dynamic-workflows disposable isolation worktrees. Record the user's checkout HEAD and porcelain status in a durable session-baseline file beside the coordinator worktree; later validators use it to detect accidental writes outside assigned worktrees. Do not change product code.
 
-Return the complete graph and durable coordinator details. Normalize status to open, claimed, blocked, complete, or needs_attention; normalize kind to implementation or remediation. Use unique keys and include every referenced blocker. Every implementation ticket must have remediationDepth=0, an empty continuationBaseSha, and chainRootKey equal to its own key. Every remediation ticket must have depth 1..${maxRemediationDepth}, a non-empty continuationBaseSha, and chainRootKey equal to its original implementation ticket key or parent for final integrated remediation. For every complete ticket, reconstruct and return its integratedCandidateSha, coordinatorSha, and verificationPassed evidence from Git plus durable tracker records; use empty SHAs and false for incomplete tickets. A ticket is runnable only when every completion blocker is integrated and verified. Remediation tickets use their recorded continuation base SHA. Set allDone only when every scoped original and remediation ticket is integrated and verified.
+Return the complete graph and durable coordinator details. Normalize status to open, claimed, blocked, complete, or needs_attention. Use claimed only for a ticket claimed by this exact coordinator with its stable marker; a ticket claimed by another coordinator is not runnable. An open ticket or a ticket claimed by this exact coordinator may be runnable. Normalize kind to implementation or remediation. Use unique keys and include every referenced blocker. Every implementation ticket must have remediationDepth=0, an empty continuationBaseSha, and chainRootKey equal to its own key. Every remediation ticket must have depth 1..${maxRemediationDepth}, a non-empty continuationBaseSha, and chainRootKey equal to its original implementation ticket key or parent for final integrated remediation. For every complete ticket, reconstruct and return its integratedCandidateSha, coordinatorSha, and verificationPassed evidence from Git plus durable tracker records; use empty SHAs and false for incomplete tickets. A ticket is runnable only when every completion blocker is integrated and verified. Remediation tickets use their recorded continuation base SHA. Set allDone only when every scoped original and remediation ticket is integrated and verified.
 `, {
   label: 'bootstrap graph',
   tier: 'big',

@@ -75,6 +75,28 @@ const runWorkflow = async (respond) => {
 const callFor = (calls, label) => calls.find((call) => call.options.label === label)
 
 const initialTicketState = graphState()
+
+test('ticket claimed by the active coordinator remains runnable after bootstrap', async () => {
+  const claimedTicketState = graphState({ status: 'claimed' })
+
+  const { calls, result } = await runWorkflow(async (label) => {
+    if (label === 'bootstrap graph') {
+      return claimedTicketState
+    }
+    if (label === 'capture wave target 1') {
+      return null
+    }
+    if (label === 'final implementation report') {
+      return 'hold: wave target capture intentionally stopped by the test'
+    }
+    throw new Error(`Unexpected agent call: ${label}`)
+  })
+
+  assert.equal(result.verdict, 'hold')
+  assert.equal(calls.some((call) => call.options.label === 'bootstrap failure'), false)
+  assert.notEqual(callFor(calls, 'capture wave target 1'), undefined)
+})
+
 const preparedTicketAssignment = {
   baseSha: waveSha,
   branch: 'issue/T',
