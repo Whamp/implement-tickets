@@ -185,7 +185,7 @@ test('uninstall removes untouched artifacts recorded by an older manifest', asyn
 
 test('install removes retired artifacts recorded by an older manifest', async (t) => {
   const home = await withTemporaryHome(t)
-  const retiredRelativePath = '.pi/agents/ticket-retired-reviewer.md'
+  const retiredRelativePath = '.pi/agents/implement-tickets-legacy-reviewer.md'
   const retiredPath = path.join(home, ...retiredRelativePath.split('/'))
   const manifestPath = path.join(home, '.pi', 'workflows', 'installations', 'implement-tickets.json')
   const retiredContent = 'retired official role\n'
@@ -206,7 +206,7 @@ test('install removes retired artifacts recorded by an older manifest', async (t
 
 test('uninstall removes retired artifacts recorded by an older manifest', async (t) => {
   const home = await withTemporaryHome(t)
-  const retiredRelativePath = '.pi/agents/ticket-retired-reviewer.md'
+  const retiredRelativePath = '.pi/agents/implement-tickets-legacy-reviewer.md'
   const retiredPath = path.join(home, ...retiredRelativePath.split('/'))
   const manifestPath = path.join(home, '.pi', 'workflows', 'installations', 'implement-tickets.json')
   const retiredContent = 'retired official role\n'
@@ -221,6 +221,24 @@ test('uninstall removes retired artifacts recorded by an older manifest', async 
   const removal = await uninstall({ home })
   assert.equal(removal.removedPaths.includes(retiredPath), true)
   await assert.rejects(readFile(retiredPath, 'utf8'), (error) => error.code === 'ENOENT')
+})
+
+test('manifest cannot claim another ticket-prefixed agent file', async (t) => {
+  const home = await withTemporaryHome(t)
+  const unrelatedRelativePath = '.pi/agents/ticket-personal-notes.md'
+  const unrelatedPath = path.join(home, ...unrelatedRelativePath.split('/'))
+  const manifestPath = path.join(home, '.pi', 'workflows', 'installations', 'implement-tickets.json')
+  const unrelatedContent = 'not owned by implement-tickets\n'
+
+  await install({ home })
+  await writeFile(unrelatedPath, unrelatedContent, 'utf8')
+  const editedManifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+  editedManifest.packageVersion = '0.0.9'
+  editedManifest.files[unrelatedRelativePath] = sha256(unrelatedContent)
+  await writeFile(manifestPath, `${JSON.stringify(editedManifest, null, 2)}\n`, 'utf8')
+
+  await assert.rejects(install({ home }), (error) => error.code === 'INSTALL_CONFLICT')
+  assert.equal(await readFile(unrelatedPath, 'utf8'), unrelatedContent)
 })
 
 test('install and uninstall reject symlinked managed directories', {

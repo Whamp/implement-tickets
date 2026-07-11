@@ -349,6 +349,37 @@ const absolutePathIsValid = (value) => typeof value === 'string' && (
   value.startsWith('\\\\')
 )
 
+const normalizedAbsolutePath = (value) => {
+  if (!absolutePathIsValid(value)) return ''
+  const slashPath = value.replace(/\\/gu, '/')
+  const windowsDrive = /^[A-Za-z]:\//u.test(slashPath)
+  const uncPath = slashPath.startsWith('//')
+  let prefix = '/'
+  let components = slashPath.slice(1).split('/')
+  if (windowsDrive) {
+    prefix = slashPath.slice(0, 2).toLowerCase()
+    components = slashPath.slice(3).split('/')
+  } else if (uncPath) {
+    const uncComponents = slashPath.slice(2).split('/').filter(Boolean)
+    if (uncComponents.length < 2) return ''
+    prefix = `//${uncComponents[0].toLowerCase()}/${uncComponents[1].toLowerCase()}`
+    components = uncComponents.slice(2)
+  }
+  const normalizedComponents = []
+  for (const component of components) {
+    if (!component || component === '.') continue
+    if (component === '..') {
+      if (normalizedComponents.length === 0) return ''
+      normalizedComponents.pop()
+    } else {
+      normalizedComponents.push(component)
+    }
+  }
+  const separator = prefix === '/' ? '' : '/'
+  const normalized = `${prefix}${separator}${normalizedComponents.join('/')}` || prefix
+  return windowsDrive || uncPath ? normalized.toLowerCase() : normalized
+}
+
 const sameKeys = (left, right) => {
   if (left.length !== right.length) return false
   if (new Set(left).size !== left.length || new Set(right).size !== right.length) return false
@@ -384,14 +415,16 @@ const preparedWaveIsCoherent = (state, runnableTickets, prepared, validated, wav
   if (!sameKeys(accountedKeys, runnableTickets.map((ticket) => ticket.key))) return false
   if (!sameKeys(validated.assignments.map((assignment) => assignment.key), prepared.prepared.map((assignment) => assignment.key))) return false
   if (new Set(prepared.prepared.map((assignment) => assignment.branch)).size !== prepared.prepared.length) return false
-  if (new Set(prepared.prepared.map((assignment) => assignment.worktree)).size !== prepared.prepared.length) return false
+  const coordinatorWorktree = normalizedAbsolutePath(state.coordinatorWorktree)
+  const normalizedWorktrees = prepared.prepared.map((assignment) => normalizedAbsolutePath(assignment.worktree))
+  if (!coordinatorWorktree || normalizedWorktrees.some((worktree) => !worktree)) return false
+  if (new Set(normalizedWorktrees).size !== prepared.prepared.length) return false
 
   for (const assignment of prepared.prepared) {
     const ticket = runnableTickets.find((item) => item.key === assignment.key)
     if (!ticket || !assignment.branch ||
         assignment.branch === state.coordinatorBranch ||
-        !absolutePathIsValid(assignment.worktree) ||
-        assignment.worktree === state.coordinatorWorktree ||
+        normalizedAbsolutePath(assignment.worktree) === coordinatorWorktree ||
         !gitShaIsValid(assignment.baseSha)) return false
     const expectedBaseSha = ticket.kind === 'remediation'
       ? ticket.continuationBaseSha
@@ -413,17 +446,20 @@ const allowedCompletionKeys = (state, sourceKey) => {
   if (!source || !source.chainRootKey || source.status === 'complete') return []
   const byKey = new Map(state.tickets.map((ticket) => [ticket.key, ticket]))
   const allowed = new Set([sourceKey])
-  let changed = true
-  while (changed) {
-    changed = false
-    for (const ticket of state.tickets) {
-      if (ticket.status === 'complete' || ticket.chainRootKey !== source.chainRootKey || allowed.has(ticket.key)) continue
-      const incompleteBlockers = ticket.blockedBy.filter((key) => byKey.get(key)?.status !== 'complete')
-      if (incompleteBlockers.length > 0 && incompleteBlockers.every((key) => allowed.has(key))) {
-        allowed.add(ticket.key)
-        changed = true
-      }
-    }
+  let cursor = sourceKey
+  while (true) {
+    const dependents = state.tickets.filter((ticket) => (
+      ticket.status !== 'complete' &&
+      ticket.chainRootKey === source.chainRootKey &&
+      ticket.blockedBy.includes(cursor)
+    ))
+    if (dependents.length === 0) break
+    if (dependents.length !== 1) return []
+    const dependent = dependents[0]
+    const incompleteBlockers = dependent.blockedBy.filter((key) => byKey.get(key)?.status !== 'complete')
+    if (incompleteBlockers.some((key) => !allowed.has(key))) return []
+    allowed.add(dependent.key)
+    cursor = dependent.key
   }
   return [...allowed].sort()
 }

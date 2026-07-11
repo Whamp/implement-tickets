@@ -50,11 +50,15 @@ const sha256 = (content) => createHash('sha256').update(content).digest('hex')
 
 const homePath = (home, relativePath) => path.join(home, ...relativePath.split('/'))
 
-const managedRelativePathIsSafe = (relativePath) => (
-  /^\.pi\/agents\/ticket-[a-z0-9-]+\.md$/u.test(relativePath) ||
-  /^\.pi\/workflows\/sources\/implement-tickets(?:-[a-z0-9-]+)?\.js$/u.test(relativePath) ||
-  /^\.pi\/workflows\/saved\/implement-tickets(?:-[a-z0-9-]+)?\.json$/u.test(relativePath)
-)
+const managedRelativePaths = new Set([
+  '.pi/workflows/sources/implement-tickets.js',
+  '.pi/workflows/saved/implement-tickets.json',
+  ...roleNames.map((roleName) => `.pi/agents/${roleName}.md`),
+  // Reserved compatibility path for a retired pre-release role name.
+  '.pi/agents/implement-tickets-legacy-reviewer.md',
+])
+
+const managedRelativePathIsSafe = (relativePath) => managedRelativePaths.has(relativePath)
 
 const readCanonicalFiles = async () => {
   const workflow = await readFile(

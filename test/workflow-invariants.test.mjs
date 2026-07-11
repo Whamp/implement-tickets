@@ -161,6 +161,23 @@ test('prepared wave binds every assignment to graph metadata and captured HEAD',
     { ...validated, coordinatorHead: 'dddddddddddddddddddddddddddddddddddddddd' },
     waveTarget,
   ), false)
+  const coordinatorAlias = {
+    ...prepared,
+    prepared: [
+      {
+        ...prepared.prepared[0],
+        worktree: '/worktrees/parent/other/../coordinator',
+      },
+      prepared.prepared[1],
+    ],
+  }
+  assert.equal(preparedWaveIsCoherent(
+    state,
+    tickets,
+    coordinatorAlias,
+    { ...validated, assignments: coordinatorAlias.prepared },
+    waveTarget,
+  ), false)
 })
 
 test('integration completion is limited to the source remediation chain', async () => {
@@ -194,6 +211,20 @@ test('integration completion is limited to the source remediation chain', async 
   ])
 
   assert.deepEqual([...allowedCompletionKeys(state, 'R2')], ['R1', 'R2', 'T'])
+
+  const branchedState = stateWith([
+    ...state.tickets,
+    ticket({
+      blockedBy: ['R2'],
+      chainRootKey: 'T',
+      continuationBaseSha: 'BRANCH',
+      key: 'BRANCH',
+      kind: 'remediation',
+      remediationDepth: 2,
+      status: 'blocked',
+    }),
+  ])
+  assert.deepEqual([...allowedCompletionKeys(branchedState, 'R2')], [])
 })
 
 test('state transition preserves immutable identity for every existing ticket', async () => {
