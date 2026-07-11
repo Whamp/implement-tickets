@@ -1,1 +1,3 @@
+agents/*.md text eol=lf
+THIRD_PARTY_NOTICES.md text eol=lf
 vendor/mattpocock-skills/v1.1.0/** text eol=lf

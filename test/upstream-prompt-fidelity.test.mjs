@@ -34,12 +34,15 @@ const assertContainsVerbatim = (prompt, source, description) => {
   )
 }
 
-test('vendored upstream bytes use LF on every platform', async () => {
+test('verbatim source and its runtime containers use LF on every platform', async () => {
   const attributes = await readFile(path.join(repositoryRoot, '.gitattributes'), 'utf8')
-  assert.match(
-    attributes,
-    /^vendor\/mattpocock-skills\/v1\.1\.0\/\*\* text eol=lf$/mu,
-  )
+  for (const pattern of [
+    'agents/*.md text eol=lf',
+    'THIRD_PARTY_NOTICES.md text eol=lf',
+    'vendor/mattpocock-skills/v1.1.0/** text eol=lf',
+  ]) {
+    assert.equal(attributes.split(/\r?\n/u).includes(pattern), true, pattern)
+  }
 })
 
 test('vendored Matt Pocock v1.1.0 prompt sources are byte-exact', async () => {
