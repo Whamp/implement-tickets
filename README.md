@@ -127,7 +127,7 @@ The workflow uses all three pi-dynamic-workflows tiers:
 - **Medium:** ordinary ticket implementation, ticket-level Standards review, graph preparation/inventory, integration, remediation creation, release verification, and final reporting.
 - **Big:** initial graph bootstrap, remediation-ticket implementation, ticket-level Spec review, both final integrated reviews, and publication.
 
-Read-only Big review calls retry twice. If any ticket-level or final reviewer still returns no result, the workflow records an operational `needs_attention` hold and preserves the candidate worktree. A missing reviewer never becomes a code-remediation ticket, and the workflow never silently downgrades the review tier.
+Read-only Big review calls retry twice. If any ticket-level or final reviewer still returns no result, the workflow records an operational `needs_attention` hold and preserves the candidate worktree. Refreshed graph state must prove ticket-level persistence; a separate read-only check must prove parent-level persistence against the exact candidate SHA. A missing reviewer never becomes a code-remediation ticket, and the workflow never silently downgrades the review tier.
 
 Configure the concrete model behind each tier through pi-dynamic-workflows. Agent role files do not hard-code model providers.
 

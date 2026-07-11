@@ -41,11 +41,8 @@ const graphState = ({ runnable = true, status = 'open', stopReason = '' } = {}) 
   tickets: [implementationTicket(status)],
 })
 
-const action = (sourceKey, details) => ({
-  completedKeys: [],
-  coordinatorSha: '',
-  createdTicketKey: '',
-  createdTicketReference: '',
+const action = (sourceKey, actionCandidateSha, details) => ({
+  candidateSha: actionCandidateSha,
   details,
   sourceKey,
   status: 'needs_attention',
@@ -73,95 +70,98 @@ const runWorkflow = async (respond) => {
 
 const callFor = (calls, label) => calls.find((call) => call.options.label === label)
 
-test('missing ticket reviewer becomes operational needs-attention without remediation', async () => {
-  const initialState = graphState()
-  const preparedAssignment = {
-    baseSha: waveSha,
-    branch: 'issue/T',
-    chainRootKey: 'T',
-    key: 'T',
-    kind: 'implementation',
-    reference: 'issue:T',
-    remediationDepth: 0,
-    title: 'Ticket T',
-    worktree: '/worktrees/parent/T',
+const initialTicketState = graphState()
+const preparedTicketAssignment = {
+  baseSha: waveSha,
+  branch: 'issue/T',
+  chainRootKey: 'T',
+  key: 'T',
+  kind: 'implementation',
+  reference: 'issue:T',
+  remediationDepth: 0,
+  title: 'Ticket T',
+  worktree: '/worktrees/parent/T',
+}
+
+const ticketReviewResponder = (inventoryState) => async (label) => {
+  if (label === 'bootstrap graph') {
+    return initialTicketState
   }
+  if (label === 'capture wave target 1') {
+    return { baseSha, candidateSha: waveSha, clean: true, ok: true, reason: '', worktree: initialTicketState.coordinatorWorktree }
+  }
+  if (label === 'prepare wave 1') {
+    return { failed: [], prepared: [preparedTicketAssignment] }
+  }
+  if (label === 'validate preparation 1') {
+    return {
+      assignments: [preparedTicketAssignment],
+      coordinatorBranch: initialTicketState.coordinatorBranch,
+      coordinatorHead: waveSha,
+      coordinatorWorktree: initialTicketState.coordinatorWorktree,
+      ok: true,
+      reason: '',
+      userCheckoutUnchanged: true,
+    }
+  }
+  if (label === 'implement 1.1 T') {
+    return {
+      baseSha: waveSha,
+      blockers: [],
+      branch: preparedTicketAssignment.branch,
+      candidateSha,
+      key: 'T',
+      ok: true,
+      status: 'implemented',
+      summary: 'Implemented T.',
+      verification: ['tests passed'],
+      worktree: preparedTicketAssignment.worktree,
+    }
+  }
+  if (label === 'validate candidate 1.1 T') {
+    return {
+      baseSha: waveSha,
+      branch: preparedTicketAssignment.branch,
+      candidateSha,
+      key: 'T',
+      ok: true,
+      reason: '',
+      worktree: preparedTicketAssignment.worktree,
+    }
+  }
+  if (label === 'standards 1.1 T') {
+    return {
+      axis: 'Standards',
+      findings: [],
+      reviewedSha: candidateSha,
+      summary: 'Standards pass.',
+      ticketKey: 'T',
+      verdict: 'pass',
+    }
+  }
+  if (label === 'spec 1.1 T') {
+    return null
+  }
+  if (label === 'record review failure 1 T') {
+    return action('T', candidateSha, 'Spec reviewer unavailable after retries.')
+  }
+  if (label === 'inventory after wave 1') {
+    return inventoryState
+  }
+  if (label === 'final implementation report') {
+    return 'hold: retry the missing Spec review'
+  }
+  throw new Error(`Unexpected agent call: ${label}`)
+}
+
+test('missing ticket reviewer becomes operational needs-attention without remediation', async () => {
   const afterReviewFailure = graphState({
     runnable: false,
     status: 'needs_attention',
     stopReason: 'Ticket T needs a fresh Spec reviewer.',
   })
 
-  const { calls, result } = await runWorkflow(async (label) => {
-    if (label === 'bootstrap graph') {
-      return initialState
-    }
-    if (label === 'capture wave target 1') {
-      return { baseSha, candidateSha: waveSha, clean: true, ok: true, reason: '', worktree: initialState.coordinatorWorktree }
-    }
-    if (label === 'prepare wave 1') {
-      return { failed: [], prepared: [preparedAssignment] }
-    }
-    if (label === 'validate preparation 1') {
-      return {
-        assignments: [preparedAssignment],
-        coordinatorBranch: initialState.coordinatorBranch,
-        coordinatorHead: waveSha,
-        coordinatorWorktree: initialState.coordinatorWorktree,
-        ok: true,
-        reason: '',
-        userCheckoutUnchanged: true,
-      }
-    }
-    if (label === 'implement 1.1 T') {
-      return {
-        baseSha: waveSha,
-        blockers: [],
-        branch: preparedAssignment.branch,
-        candidateSha,
-        key: 'T',
-        ok: true,
-        status: 'implemented',
-        summary: 'Implemented T.',
-        verification: ['tests passed'],
-        worktree: preparedAssignment.worktree,
-      }
-    }
-    if (label === 'validate candidate 1.1 T') {
-      return {
-        baseSha: waveSha,
-        branch: preparedAssignment.branch,
-        candidateSha,
-        key: 'T',
-        ok: true,
-        reason: '',
-        worktree: preparedAssignment.worktree,
-      }
-    }
-    if (label === 'standards 1.1 T') {
-      return {
-        axis: 'Standards',
-        findings: [],
-        reviewedSha: candidateSha,
-        summary: 'Standards pass.',
-        ticketKey: 'T',
-        verdict: 'pass',
-      }
-    }
-    if (label === 'spec 1.1 T') {
-      return null
-    }
-    if (label === 'record review failure 1 T') {
-      return action('T', 'Spec reviewer unavailable after retries.')
-    }
-    if (label === 'inventory after wave 1') {
-      return afterReviewFailure
-    }
-    if (label === 'final implementation report') {
-      return 'hold: retry the missing Spec review'
-    }
-    throw new Error(`Unexpected agent call: ${label}`)
-  })
+  const { calls, result } = await runWorkflow(ticketReviewResponder(afterReviewFailure))
 
   assert.equal(result.ok, false)
   assert.equal(result.verdict, 'hold')
@@ -172,6 +172,16 @@ test('missing ticket reviewer becomes operational needs-attention without remedi
   assert.equal(callFor(calls, 'record review failure 1 T').options.tier, 'small')
   assert.equal(callFor(calls, 'final implementation report').options.tier, 'medium')
   assert.equal(calls.some((call) => call.options.label.startsWith('remediate review')), false)
+})
+
+test('stale ticket inventory cannot erase an operational reviewer outage', async () => {
+  const { calls, result } = await runWorkflow(ticketReviewResponder(initialTicketState))
+
+  assert.equal(result.ok, false)
+  assert.equal(result.verdict, 'hold')
+  assert.equal(calls.some((call) => call.options.label === 'capture wave target 2'), false)
+  assert.equal(calls.some((call) => call.options.label.startsWith('remediate review')), false)
+  assert.match(result.report, /hold/u)
 })
 
 test('missing final reviewer holds the parent without final remediation', async () => {
@@ -187,7 +197,7 @@ test('missing final reviewer holds the parent without final remediation', async 
     }],
   }
 
-  const { calls, result } = await runWorkflow(async (label) => {
+  const { calls, result } = await runWorkflow(async (label, _options, prompt) => {
     if (label === 'bootstrap graph') {
       return completedState
     }
@@ -215,21 +225,32 @@ test('missing final reviewer holds the parent without final remediation', async 
       return null
     }
     if (label === 'record final review failure 1') {
-      return action('parent', 'Final Spec reviewer unavailable after retries.')
+      return action('parent', finalSha, 'Final Spec reviewer unavailable after retries.')
+    }
+    if (label === 'verify final review failure 1') {
+      return {
+        candidateSha: finalSha,
+        details: 'No exact parent needs-attention tracker evidence found.',
+        ok: false,
+        sourceKey: 'parent',
+        status: 'needs_attention',
+      }
     }
     if (label === 'final implementation report') {
-      return 'hold: retry the final Spec review'
+      return prompt
     }
     throw new Error(`Unexpected agent call: ${label}`)
   })
 
   assert.equal(result.ok, false)
   assert.equal(result.verdict, 'hold')
+  assert.match(result.report, /final reviewer outage was not durably verified/iu)
   assert.equal(callFor(calls, 'final standards 1').options.tier, 'big')
   assert.equal(callFor(calls, 'final standards 1').options.retries, 2)
   assert.equal(callFor(calls, 'final spec 1').options.tier, 'big')
   assert.equal(callFor(calls, 'final spec 1').options.retries, 2)
   assert.equal(callFor(calls, 'record final review failure 1').options.tier, 'small')
+  assert.equal(callFor(calls, 'verify final review failure 1').options.tier, 'small')
   assert.equal(callFor(calls, 'final implementation report').options.tier, 'medium')
   assert.equal(calls.some((call) => call.options.label.startsWith('publish final remediation')), false)
   assert.equal(calls.some((call) => call.options.label === 'publish integration'), false)

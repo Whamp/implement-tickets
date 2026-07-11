@@ -281,10 +281,24 @@ const actionSchema = {
 const needsAttentionActionSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['status', 'sourceKey', 'details'],
+  required: ['status', 'sourceKey', 'candidateSha', 'details'],
   properties: {
     status: { type: 'string', enum: ['needs_attention'] },
     sourceKey: { type: 'string' },
+    candidateSha: { type: 'string' },
+    details: { type: 'string' },
+  },
+}
+
+const needsAttentionVerificationSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['ok', 'status', 'sourceKey', 'candidateSha', 'details'],
+  properties: {
+    ok: { type: 'boolean' },
+    status: { type: 'string', enum: ['needs_attention'] },
+    sourceKey: { type: 'string' },
+    candidateSha: { type: 'string' },
     details: { type: 'string' },
   },
 }
@@ -902,6 +916,7 @@ Return only evidence-backed findings. Use P0, P1, P2, or P3. P0/P1 block integra
     const dispositions = []
     const integrationEvidence = []
     const remediationEvidence = []
+    const reviewOutageEvidence = []
     for (const failed of prepared.failed) {
       dispositions.push(await agent(`
 Record ticket ${failed.key} as needs-attention for this coordinator session because preparation failed: ${failed.reason}
@@ -950,7 +965,7 @@ Candidate SHA: ${candidate.candidateSha}
 Candidate branch: ${candidate.branch}
 Candidate worktree: ${candidate.worktree}
 
-Treat this as an operational reviewer outage, not a code finding. Preserve the candidate branch/worktree, add durable tracker evidence, and do not create a remediation ticket or mark the source complete. Return status=needs_attention and sourceKey=${candidate.key}. Do not change product code.
+Treat this as an operational reviewer outage, not a code finding. Preserve the candidate branch/worktree, add durable tracker evidence, and do not create a remediation ticket or mark the source complete. Return status=needs_attention, sourceKey=${candidate.key}, and candidateSha=${candidate.candidateSha}. Do not change product code.
 `, {
           label: `record review failure ${wave} ${candidate.key}`,
           tier: 'small',
@@ -958,10 +973,14 @@ Treat this as an operational reviewer outage, not a code finding. Preserve the c
           schema: needsAttentionActionSchema,
         })
         dispositions.push(reviewFailure)
-        if (!reviewFailure || reviewFailure.sourceKey !== candidate.key) {
+        if (!reviewFailure ||
+            reviewFailure.status !== 'needs_attention' ||
+            reviewFailure.sourceKey !== candidate.key ||
+            reviewFailure.candidateSha !== candidate.candidateSha) {
           state = { ...state, ok: false, stopReason: `Reviewer outage for ${candidate.key} was not durably recorded.` }
           break
         }
+        reviewOutageEvidence.push(reviewFailure)
         continue
       }
 
@@ -1148,6 +1167,7 @@ If the depth cap would be exceeded, create no ticket, mark the chain needs-atten
       dispositions,
       integrationEvidence,
       remediationEvidence,
+      reviewOutageEvidence,
     })
     if (!state || !state.ok) break
 
@@ -1161,8 +1181,13 @@ If the depth cap would be exceeded, create no ticket, mark the chain needs-atten
 
     if (state && (!graphIsCoherent(state) ||
         !stateMatchesSession(state) ||
-        !stateTransitionIsCoherent(previousState, state, integrationEvidence, remediationEvidence))) {
-      state = { ...state, ok: false, stopReason: 'The refreshed graph failed deterministic coherence, session-identity, or integration-provenance checks.' }
+        !stateTransitionIsCoherent(
+          previousState,
+          state,
+          integrationEvidence,
+          [...remediationEvidence, ...reviewOutageEvidence],
+        ))) {
+      state = { ...state, ok: false, stopReason: 'The refreshed graph failed deterministic coherence, session identity, integration provenance, or reviewer-outage persistence checks.' }
     }
     if (!state || !state.ok) break
   }
@@ -1245,25 +1270,53 @@ Exact candidate SHA: ${finalTarget.candidateSha}
 Coordinator branch: ${state.coordinatorBranch}
 Coordinator worktree: ${state.coordinatorWorktree}
 
-Treat this as an operational reviewer outage, not a code finding. Add durable tracker evidence, preserve all branches/worktrees, and do not create a parent remediation ticket, publish, or close the parent. Return status=needs_attention and sourceKey=parent. Do not change product code.
+Treat this as an operational reviewer outage, not a code finding. Add durable tracker evidence, preserve all branches/worktrees, and do not create a parent remediation ticket, publish, or close the parent. Return status=needs_attention, sourceKey=parent, and candidateSha=${finalTarget.candidateSha}. Do not change product code.
 `, {
       label: `record final review failure ${finalReviewRound}`,
       tier: 'small',
       agentType: 'ticket-graph-coordinator',
       schema: needsAttentionActionSchema,
     })
+    const reviewFailureActionMatches = reviewFailure &&
+      reviewFailure.status === 'needs_attention' &&
+      reviewFailure.sourceKey === 'parent' &&
+      reviewFailure.candidateSha === finalTarget.candidateSha
+    const reviewFailureVerification = reviewFailureActionMatches
+      ? await agent(`
+Independently verify the durable parent-level reviewer-outage record.
+Parent: ${state.parentReference}
+Expected source key: parent
+Exact candidate SHA: ${finalTarget.candidateSha}
+Unavailable review axes: ${unavailableFinalAxes.join(', ')}
+Coordinator branch: ${state.coordinatorBranch}
+Coordinator worktree: ${state.coordinatorWorktree}
+
+Stay read-only. Re-read the tracker and require a durable needs-attention record for this exact parent, candidate SHA, and unavailable axes. Verify the user's checkout still matches the session baseline. Return status=needs_attention, sourceKey=parent, candidateSha=${finalTarget.candidateSha}, and ok=true only when that exact evidence exists. Do not modify code, tracker state, branches, or worktrees.
+`, {
+        label: `verify final review failure ${finalReviewRound}`,
+        tier: 'small',
+        agentType: 'ticket-graph-coordinator',
+        schema: needsAttentionVerificationSchema,
+      })
+      : null
+    const reviewFailureIsDurable = reviewFailureVerification &&
+      reviewFailureVerification.ok &&
+      reviewFailureVerification.status === 'needs_attention' &&
+      reviewFailureVerification.sourceKey === 'parent' &&
+      reviewFailureVerification.candidateSha === finalTarget.candidateSha
     finalReviewHistory.push({
       round: finalReviewRound,
       target: finalTarget,
       reviews: finalReviews,
       operationalFailure: reviewFailure,
+      operationalFailureVerification: reviewFailureVerification,
     })
     state = {
       ...state,
       ok: false,
-      stopReason: reviewFailure && reviewFailure.sourceKey === 'parent'
+      stopReason: reviewFailureIsDurable
         ? `Final reviewer outage: ${unavailableFinalAxes.join(', ')}.`
-        : 'The final reviewer outage was not durably recorded.',
+        : 'The final reviewer outage was not durably verified.',
     }
     break
   }
