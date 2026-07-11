@@ -22,7 +22,7 @@ The exact wording is a runtime contract:
 - Standards, Spec, and final-report roles each contain the complete `/code-review` skill verbatim.
 - The workflow supplies the resolved fixed point, three-dot diff command, commit list, standards-source list, ticket, and parent spec required by the upstream prompts.
 - Each reviewer returns its original 1–400-word axis report as durable structured evidence; schema and runtime checks enforce that range. Remediation tickets and final output preserve `## Standards` and `## Spec` separately without merging or reranking findings.
-- Commit subjects and standards-source paths are validated, JSON-serialized, and enclosed in explicit untrusted-data elements so repository-controlled text cannot become reviewer instructions.
+- Tracker/spec references, commit subjects, and standards-source paths are JSON-serialized, escaped, and enclosed in explicit untrusted-data elements so repository-controlled text cannot become reviewer instructions; commit and path shapes are validated before review.
 
 The graph workflow makes only these explicit adaptations:
 
