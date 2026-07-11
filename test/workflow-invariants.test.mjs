@@ -20,6 +20,18 @@ const loadHelpers = async () => {
   return context.helpers
 }
 
+const loadRoutingHelpers = async () => {
+  const source = await readFile(workflowPath, 'utf8')
+  const bootstrapOffset = source.indexOf("\nphase('Bootstrap')")
+  assert.notEqual(bootstrapOffset, -1)
+  const helperSource = source
+    .slice(0, bootstrapOffset)
+    .replace(/^export const meta =/u, 'const meta =')
+  const context = vm.createContext({ args: {}, cwd: repositoryRoot })
+  new vm.Script(`${helperSource}\nglobalThis.routingHelpers = {\n  finalReportModelTier,\n  implementationModelTier,\n  missingReviewAxes,\n  ticketReviewModelTier,\n}\n`).runInContext(context)
+  return context.routingHelpers
+}
+
 const ticket = ({
   blockedBy = [],
   chainRootKey,
@@ -58,6 +70,40 @@ const stateWith = (tickets) => ({
   runnableKeys: tickets.filter((item) => item.status === 'open').map((item) => item.key),
   stopReason: '',
   tickets,
+})
+
+test('model routing spends Big on Spec review and remediation implementation', async () => {
+  const {
+    finalReportModelTier,
+    implementationModelTier,
+    ticketReviewModelTier,
+  } = await loadRoutingHelpers()
+
+  assert.equal(implementationModelTier('implementation'), 'medium')
+  assert.equal(implementationModelTier('remediation'), 'big')
+  assert.equal(ticketReviewModelTier('Standards'), 'medium')
+  assert.equal(ticketReviewModelTier('Spec'), 'big')
+  assert.equal(finalReportModelTier, 'medium')
+})
+
+test('missing reviewer results are classified by axis as operational failures', async () => {
+  const { missingReviewAxes } = await loadRoutingHelpers()
+  const reviewIndex = [
+    { axis: 'Standards', key: 'T' },
+    { axis: 'Spec', key: 'T' },
+    { axis: 'Standards', key: 'U' },
+    { axis: 'Spec', key: 'U' },
+  ]
+  const reviews = [
+    { axis: 'Standards', ticketKey: 'T' },
+    null,
+    null,
+    { axis: 'Spec', ticketKey: 'U' },
+  ]
+
+  assert.deepEqual([...missingReviewAxes(reviews, reviewIndex, 'T')], ['Spec'])
+  assert.deepEqual([...missingReviewAxes(reviews, reviewIndex, 'U')], ['Standards'])
+  assert.deepEqual([...missingReviewAxes(reviews, reviewIndex, 'unknown')], [])
 })
 
 test('prepared wave binds every assignment to graph metadata and captured HEAD', async () => {

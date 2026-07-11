@@ -119,6 +119,18 @@ PR creation defaults to true. Disable it with:
 
 The command runs in the background through pi-dynamic-workflows. Inspect it with `/workflows`.
 
+## Model routing
+
+The workflow uses all three pi-dynamic-workflows tiers:
+
+- **Small:** read-only SHA/worktree capture, independent validation, and failure bookkeeping.
+- **Medium:** ordinary ticket implementation, ticket-level Standards review, graph preparation/inventory, integration, remediation creation, release verification, and final reporting.
+- **Big:** initial graph bootstrap, remediation-ticket implementation, ticket-level Spec review, both final integrated reviews, and publication.
+
+Read-only Big review calls retry twice. If any ticket-level or final reviewer still returns no result, the workflow records an operational `needs_attention` hold and preserves the candidate worktree. Refreshed graph state must prove ticket-level persistence; a separate read-only check must prove parent-level persistence against the exact candidate SHA. A missing reviewer never becomes a code-remediation ticket, and the workflow never silently downgrades the review tier.
+
+Configure the concrete model behind each tier through pi-dynamic-workflows. Agent role files do not hard-code model providers.
+
 ## Ticket completion
 
 A ticket counts as complete only after its accepted candidate is integrated and verified on the coordinator branch. The parent remains open until a human merges the integration pull request.
@@ -174,7 +186,7 @@ npm run uninstall:global -- --force
 npm test
 ```
 
-Tests cover workflow portability and parsing, role bindings, graph/remediation/completion invariants, generated saved-workflow identity, idempotent install and upgrade, conflict protection, Windows profile isolation, command behavior, and safe uninstall. CI runs on Linux, macOS, and Windows.
+Tests cover workflow portability and parsing, model routing and reviewer-outage behavior, role bindings, graph/remediation/completion invariants, generated saved-workflow identity, idempotent install and upgrade, conflict protection, Windows profile isolation, command behavior, and safe uninstall. CI runs on Linux, macOS, and Windows.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) before changing orchestration behavior.
 

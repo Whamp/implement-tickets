@@ -29,6 +29,7 @@ const roleNames = [
 ]
 
 const sha256 = (content) => createHash('sha256').update(content).digest('hex')
+const packageVersion = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version
 
 const withTemporaryHome = async (t) => {
   const home = await mkdtemp(path.join(os.tmpdir(), 'implement-tickets-'))
@@ -77,7 +78,7 @@ test('install creates a verifiable global workflow installation', async (t) => {
     'utf8',
   ))
   assert.equal(manifest.schemaVersion, 1)
-  assert.equal(manifest.packageVersion, '0.1.0')
+  assert.equal(manifest.packageVersion, packageVersion)
   assert.equal(Object.keys(manifest.files).length, 7)
   assert.equal(
     manifest.files['.pi/workflows/sources/implement-tickets.js'],
