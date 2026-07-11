@@ -98,6 +98,7 @@ test('workflow supplies the context required by the verbatim review prompts', as
 
   assert.match(workflow, /commitList/u)
   assert.match(workflow, /standardsSources/u)
+  assert.match(workflow, /<untrusted-spec-sources-json>/u)
   assert.match(workflow, /git log .*\.\.HEAD --oneline/u)
   assert.match(workflow, /git diff .*\.\.\.HEAD/u)
   assert.match(workflow, /Do \*\*not\*\* merge or rerank findings/u)
