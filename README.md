@@ -3,13 +3,36 @@
 [![CI](https://github.com/Whamp/implement-tickets/actions/workflows/ci.yml/badge.svg)](https://github.com/Whamp/implement-tickets/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A saved [pi-dynamic-workflows](https://github.com/QuintinShaw/pi-dynamic-workflows) command that implements a dependency graph of tickets with separate implementation and review sessions.
+A saved [pi-dynamic-workflows](https://github.com/QuintinShaw/pi-dynamic-workflows) command that applies Matt Pocock's v1.1.0 `/implement` and `/code-review` skills across a dependency graph of tickets with separate implementation and review sessions.
 
 ```text
 /implement-tickets <parent-spec-or-issue>
 ```
 
 The workflow never lets a code-writing session review its own work. Blocking review findings become durable remediation tickets that pass through the same implementation and review pipeline as original tickets.
+
+## Upstream skill contract
+
+This project pins [Matt Pocock's skills v1.1.0](https://github.com/mattpocock/skills/tree/d574778f94cf620fcc8ce741584093bc650a61d3) at commit `d574778f94cf620fcc8ce741584093bc650a61d3`. The repository vendors the relevant source and license under [`vendor/mattpocock-skills/v1.1.0`](vendor/mattpocock-skills/v1.1.0). Tests verify every vendored file by SHA-256.
+
+The exact wording is a runtime contract:
+
+- The implementer role contains the complete `/implement` skill verbatim.
+- Because `/implement` delegates to `/tdd`, the implementer also receives the complete v1.1.0 `/tdd` skill plus its `tests.md` and `mocking.md` references verbatim.
+- Standards, Spec, and final-report roles each contain the complete `/code-review` skill verbatim.
+- The workflow supplies the resolved fixed point, three-dot diff command, commit list, standards-source list, ticket, and parent spec required by the upstream prompts.
+- Each reviewer returns its original 1–400-word axis report as durable structured evidence; schema and runtime checks enforce that range. Remediation tickets and final output preserve `## Standards` and `## Spec` separately without merging or reranking findings.
+- Commit subjects and standards-source paths are validated, JSON-serialized, and enclosed in explicit untrusted-data elements so repository-controlled text cannot become reviewer instructions.
+
+The graph workflow makes only these explicit adaptations:
+
+1. A ticket plus its parent spec is the `/implement` input. Their Testing Decisions define the pre-agreed seams; a detached implementer stops when those seams are absent or ambiguous.
+2. The workflow performs `/code-review` after the implementer returns, using fresh independent sessions. The code-writing session never reviews itself.
+3. Coordinator-owned Git state supplies the fixed point instead of asking the user at each ticket. A bad ref or empty diff still fails before reviewers run.
+4. A missing or ambiguous parent/ticket spec fails bootstrap instead of skipping the Spec axis.
+5. Structured P0–P3 severities, durable remediation tickets, worktree isolation, and exact-SHA gates extend the upstream skills without replacing their wording.
+
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution and Matt Pocock's MIT license.
 
 ## What it does
 
@@ -186,10 +209,10 @@ npm run uninstall:global -- --force
 npm test
 ```
 
-Tests cover workflow portability and parsing, model routing and reviewer-outage behavior, role bindings, graph/remediation/completion invariants, generated saved-workflow identity, idempotent install and upgrade, conflict protection, Windows profile isolation, command behavior, and safe uninstall. CI runs on Linux, macOS, and Windows.
+Tests cover pinned upstream source hashes, verbatim prompt inclusion, review-context propagation, workflow portability and parsing, model routing and reviewer-outage behavior, role bindings, graph/remediation/completion invariants, generated saved-workflow identity, idempotent install and upgrade, conflict protection, Windows profile isolation, command behavior, and safe uninstall. CI runs on Linux, macOS, and Windows.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) before changing orchestration behavior.
 
 ## License
 
-[MIT](LICENSE)
+The workflow is [MIT licensed](LICENSE). Verbatim Matt Pocock skill material remains under Matt Pocock's MIT license in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

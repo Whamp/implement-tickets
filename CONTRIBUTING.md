@@ -21,6 +21,16 @@ Use one red-green test cycle per behavior:
 
 Keep implementation, Standards review, Spec review, and coordination in separate agent sessions. Do not weaken exact-SHA checks or turn blocking findings into an in-memory fixer loop.
 
+## Upstream prompt contract
+
+Matt Pocock's pinned skill wording is a runtime contract, not prose to summarize.
+
+- Import upstream files from an immutable release tag or commit into `vendor/mattpocock-skills/<version>/` without editing them.
+- Keep upstream text byte-exact inside the relevant agent roles.
+- Put graph/worktree/SHA adaptations after the verbatim source block and label them explicitly.
+- Update the pinned hashes, README mapping, third-party notice, and fidelity tests in the same change.
+- Never silently paraphrase an upstream instruction to save prompt tokens.
+
 ## Verification
 
 ```bash
