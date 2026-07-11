@@ -20,7 +20,11 @@ const runScript = (scriptName, home, ...arguments_) => spawnSync(
   {
     cwd: repositoryRoot,
     encoding: 'utf8',
-    env: { ...process.env, HOME: home },
+    env: {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+    },
   },
 )
 
@@ -30,10 +34,19 @@ test('CLI installs, checks, and uninstalls the global workflow', async (t) => {
   const beforeInstall = runScript('check.mjs', home)
   assert.equal(beforeInstall.status, 1)
   assert.match(beforeInstall.stderr, /not current/iu)
+  const reportedPaths = beforeInstall.stderr
+    .split('\n')
+    .filter((line) => line.startsWith('missing: '))
+    .map((line) => line.slice('missing: '.length))
+  assert.equal(reportedPaths.length, 8)
+  for (const reportedPath of reportedPaths) {
+    const relativePath = path.relative(home, reportedPath)
+    assert.equal(relativePath.startsWith('..') || path.isAbsolute(relativePath), false)
+  }
 
   const installation = runScript('install.mjs', home)
   assert.equal(installation.status, 0, installation.stderr)
-  assert.match(installation.stdout, /installed 7 artifacts/iu)
+  assert.match(installation.stdout, /installed 8 artifacts/iu)
 
   const current = runScript('check.mjs', home)
   assert.equal(current.status, 0, current.stderr)
@@ -45,7 +58,7 @@ test('CLI installs, checks, and uninstalls the global workflow', async (t) => {
 
   const removal = runScript('uninstall.mjs', home)
   assert.equal(removal.status, 0, removal.stderr)
-  assert.match(removal.stdout, /removed 7 artifacts/iu)
+  assert.match(removal.stdout, /removed 8 artifacts/iu)
 
   const afterRemoval = runScript('check.mjs', home)
   assert.equal(afterRemoval.status, 1)

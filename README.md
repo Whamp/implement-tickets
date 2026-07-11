@@ -81,6 +81,7 @@ Run `/reload` in Pi after installation. The installer creates:
 ```text
 ~/.pi/workflows/sources/implement-tickets.js
 ~/.pi/workflows/saved/implement-tickets.json
+~/.pi/workflows/installations/implement-tickets.json
 ~/.pi/agents/ticket-implementer.md
 ~/.pi/agents/ticket-standards-reviewer.md
 ~/.pi/agents/ticket-spec-reviewer.md
@@ -88,7 +89,9 @@ Run `/reload` in Pi after installation. The installer creates:
 ~/.pi/agents/ticket-final-reporter.md
 ```
 
-The installer refuses to overwrite modified files. To intentionally replace local changes:
+The installation manifest records the SHA-256 hash of every generated artifact. That lets a later release upgrade untouched older files while refusing to overwrite local modifications. A manifest-less installation is adopted only when every existing file already matches the current canonical release.
+
+The installer stages all changes before replacing files and rolls back committed replacements when a later write fails. It refuses to overwrite modified files. To intentionally replace local changes:
 
 ```bash
 npm run install:global -- --force
@@ -159,7 +162,7 @@ Run `/reload` after an update.
 npm run uninstall:global
 ```
 
-Uninstall refuses to remove locally modified managed files. Use `--force` only when you intend to discard those changes:
+Uninstall compares installed files with the hashes recorded at installation, so it can safely remove an untouched older release after the repository advances. It stages removals through sibling backup files and restores them when a later removal fails. It refuses to remove locally modified managed files. Use `--force` only when you intend to discard those changes:
 
 ```bash
 npm run uninstall:global -- --force
@@ -171,7 +174,7 @@ npm run uninstall:global -- --force
 npm test
 ```
 
-Tests cover workflow portability and parsing, role bindings, generated saved-workflow identity, idempotent installation, conflict protection, command behavior, and safe uninstall.
+Tests cover workflow portability and parsing, role bindings, graph/remediation/completion invariants, generated saved-workflow identity, idempotent install and upgrade, conflict protection, Windows profile isolation, command behavior, and safe uninstall. CI runs on Linux, macOS, and Windows.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) before changing orchestration behavior.
 
