@@ -16,7 +16,7 @@ const loadHelpers = async () => {
     .slice(0, bootstrapOffset)
     .replace(/^export const meta =/u, 'const meta =')
   const context = vm.createContext({ args: {}, cwd: repositoryRoot })
-  new vm.Script(`${helperSource}\nglobalThis.helpers = {\n  allowedCompletionKeys,\n  preparedWaveIsCoherent,\n  remediationTransitionIsCoherent,\n  reviewContextIsValid,\n  stateTransitionIsCoherent,\n}\n`).runInContext(context)
+  new vm.Script(`${helperSource}\nglobalThis.helpers = {\n  allowedCompletionKeys,\n  bindInventoryState,\n  bindRemediationAction,\n  implementationSchema,\n  integrationActionSchema,\n  integrationValidationSchema,\n  inventorySchema,\n  preparedWaveIsCoherent,\n  publicationVerificationIsValid,\n  publishSchema,\n  releaseVerificationSchema,\n  remediationActionSchema,\n  remediationTransitionIsCoherent,\n  reviewContextIsValid,\n  reviewSchema,\n  stateTransitionIsCoherent,\n}\n`).runInContext(context)
   return context.helpers
 }
 
@@ -84,6 +84,65 @@ const stateWith = (tickets) => ({
   tickets,
 })
 
+test('agent schemas contain observations, not workflow-owned identity echoes', async () => {
+  const {
+    implementationSchema,
+    integrationActionSchema,
+    integrationValidationSchema,
+    inventorySchema,
+    publishSchema,
+    remediationActionSchema,
+    releaseVerificationSchema,
+    reviewSchema,
+  } = await loadHelpers()
+
+  for (const property of ['key', 'branch', 'worktree', 'baseSha']) {
+    assert.equal(implementationSchema.properties[property], undefined)
+  }
+  for (const property of ['axis', 'ticketKey', 'reviewedSha', 'verdict']) {
+    assert.equal(reviewSchema.properties[property], undefined)
+  }
+  for (const property of ['sourceKey', 'coordinatorSha', 'completedKeys']) {
+    assert.equal(integrationActionSchema.properties[property], undefined)
+  }
+  for (const property of ['sourceKey', 'allowedCompletionKeys']) {
+    assert.equal(integrationValidationSchema.properties[property], undefined)
+  }
+  for (const property of ['repoRoot', 'parentReference', 'baseSha', 'coordinatorBranch', 'coordinatorWorktree', 'tickets']) {
+    assert.equal(inventorySchema.properties[property], undefined)
+  }
+  for (const property of ['title', 'reference', 'kind', 'remediationDepth', 'continuationBaseSha', 'chainRootKey']) {
+    assert.equal(inventorySchema.properties.existingTickets.items.properties[property], undefined)
+  }
+  for (const property of ['sourceKey', 'continuationBaseSha', 'remediationDepth', 'chainRootKey']) {
+    assert.equal(remediationActionSchema.properties[property], undefined)
+  }
+  for (const property of ['coordinatorBranch', 'coordinatorWorktree', 'coordinatorSha']) {
+    assert.equal(publishSchema.properties[property], undefined)
+  }
+  for (const property of ['baseSha', 'branch', 'worktree']) {
+    assert.equal(releaseVerificationSchema.properties[property], undefined)
+  }
+})
+
+test('publication is decided by independent remote observation', async () => {
+  const { publicationVerificationIsValid } = await loadHelpers()
+  const expectedSha = 'e'.repeat(40)
+  const observation = {
+    clean: true,
+    localSha: expectedSha,
+    ok: true,
+    parentOpen: true,
+    pullRequestHeadSha: expectedSha,
+    pullRequestUrl: 'https://example.test/pr/1',
+    remoteSha: expectedSha,
+  }
+
+  assert.equal(publicationVerificationIsValid(observation, expectedSha, true), true)
+  assert.equal(publicationVerificationIsValid({ ...observation, remoteSha: 'f'.repeat(40) }, expectedSha, true), false)
+  assert.equal(publicationVerificationIsValid({ ...observation, pullRequestUrl: '' }, expectedSha, true), false)
+})
+
 test('model routing spends Big on Spec review and remediation implementation', async () => {
   const {
     finalReportModelTier,
@@ -108,30 +167,25 @@ test('missing reviewer results are classified by axis as operational failures', 
   ]
   const reviews = [
     {
-      axis: 'Standards',
       findings: [],
+      observedHeadSha: 'a'.repeat(40),
       report: 'No findings.',
-      reviewedSha: 'a'.repeat(40),
       summary: 'Pass.',
-      ticketKey: 'T',
-      verdict: 'pass',
     },
     null,
     null,
     {
-      axis: 'Spec',
       findings: [],
+      observedHeadSha: 'b'.repeat(40),
       report: 'No findings.',
-      reviewedSha: 'b'.repeat(40),
       summary: 'Pass.',
-      ticketKey: 'U',
-      verdict: 'pass',
     },
   ]
 
-  assert.deepEqual([...missingReviewAxes(reviews, reviewIndex, 'T')], ['Spec'])
-  assert.deepEqual([...missingReviewAxes(reviews, reviewIndex, 'U')], ['Standards'])
-  assert.deepEqual([...missingReviewAxes(reviews, reviewIndex, 'unknown')], [])
+  assert.deepEqual([...missingReviewAxes(reviews, reviewIndex, 'T', 'a'.repeat(40))], ['Spec'])
+  assert.deepEqual([...missingReviewAxes(reviews, reviewIndex, 'U', 'b'.repeat(40))], ['Standards'])
+  assert.deepEqual([...missingReviewAxes(reviews, reviewIndex, 'unknown', 'c'.repeat(40))], [])
+  assert.deepEqual([...missingReviewAxes(reviews, reviewIndex, 'T', 'b'.repeat(40))], ['Standards', 'Spec'])
 })
 
 test('review context requires a non-empty commit list and unique standards sources', async () => {
@@ -188,13 +242,10 @@ test('untrusted prompt data cannot close its delimiter', async () => {
 test('review reports contain between one and 400 words', async () => {
   const { reviewResultIsComplete } = await loadReviewHelpers()
   const review = {
-    axis: 'Standards',
     findings: [],
+    observedHeadSha: 'a'.repeat(40),
     report: 'No findings.',
-    reviewedSha: 'a'.repeat(40),
     summary: 'Pass.',
-    ticketKey: 'T',
-    verdict: 'pass',
   }
 
   assert.equal(reviewResultIsComplete(review), true)
@@ -373,6 +424,87 @@ test('integration completion is limited to the source remediation chain', async 
   assert.deepEqual([...allowedCompletionKeys(branchedState, 'R2')], [])
 })
 
+test('inventory refresh cannot redefine session or existing ticket identity', async () => {
+  const { bindInventoryState } = await loadHelpers()
+  const before = stateWith([ticket({ key: 'T', title: 'Stable title' })])
+  const observed = {
+    allDone: false,
+    existingTickets: [{
+      blockedBy: [],
+      coordinatorSha: '',
+      integratedCandidateSha: '',
+      key: 'T',
+      status: 'needs_attention',
+      verificationPassed: false,
+    }],
+    newTickets: [],
+    ok: true,
+    runnableKeys: [],
+    stopReason: 'Needs attention.',
+  }
+
+  const bound = bindInventoryState(before, observed)
+
+  assert.equal(bound.baseSha, before.baseSha)
+  assert.equal(bound.coordinatorWorktree, before.coordinatorWorktree)
+  assert.equal(bound.parentTitle, before.parentTitle)
+  assert.equal(bound.tickets[0].title, 'Stable title')
+  assert.equal(bound.tickets[0].status, 'needs_attention')
+})
+
+test('inventory binding preserves remediation identity across multiple waves', async () => {
+  const { bindInventoryState } = await loadHelpers()
+  const before = stateWith([ticket({ key: 'T' })])
+  const remediationOne = ticket({
+    chainRootKey: 'T',
+    continuationBaseSha: 'c'.repeat(40),
+    key: 'R1',
+    kind: 'remediation',
+    remediationDepth: 1,
+  })
+  const afterOne = bindInventoryState(before, {
+    allDone: false,
+    existingTickets: [{
+      blockedBy: ['R1'],
+      coordinatorSha: '',
+      integratedCandidateSha: '',
+      key: 'T',
+      status: 'blocked',
+      verificationPassed: false,
+    }],
+    newTickets: [remediationOne],
+    ok: true,
+    runnableKeys: ['R1'],
+    stopReason: '',
+  })
+  const remediationTwo = ticket({
+    chainRootKey: 'T',
+    continuationBaseSha: 'd'.repeat(40),
+    key: 'R2',
+    kind: 'remediation',
+    remediationDepth: 2,
+  })
+  const afterTwo = bindInventoryState(afterOne, {
+    allDone: false,
+    existingTickets: afterOne.tickets.map((item) => ({
+      blockedBy: item.key === 'R1' ? ['R2'] : item.blockedBy,
+      coordinatorSha: item.coordinatorSha,
+      integratedCandidateSha: item.integratedCandidateSha,
+      key: item.key,
+      status: item.key === 'R1' ? 'blocked' : item.status,
+      verificationPassed: item.verificationPassed,
+    })),
+    newTickets: [remediationTwo],
+    ok: true,
+    runnableKeys: ['R2'],
+    stopReason: '',
+  })
+
+  assert.deepEqual([...afterTwo.tickets.map((item) => item.key)], ['T', 'R1', 'R2'])
+  assert.equal(afterTwo.tickets[1].continuationBaseSha, remediationOne.continuationBaseSha)
+  assert.equal(afterTwo.tickets[1].remediationDepth, 1)
+})
+
 test('state transition preserves immutable identity for every existing ticket', async () => {
   const { stateTransitionIsCoherent } = await loadHelpers()
   const remediation = ticket({
@@ -392,6 +524,28 @@ test('state transition preserves immutable identity for every existing ticket', 
   ])
 
   assert.equal(stateTransitionIsCoherent(before, after, [], []), false)
+})
+
+test('remediation actions are bound to workflow-owned provenance', async () => {
+  const { bindRemediationAction } = await loadHelpers()
+  const expectation = {
+    chainRootKey: 'T',
+    continuationBaseSha: 'e'.repeat(40),
+    nextDepth: 1,
+    sourceKey: 'T',
+  }
+  const bound = bindRemediationAction({
+    createdTicketKey: 'R1',
+    createdTicketReference: 'issue:R1',
+    details: 'created',
+    status: 'remediation_created',
+  }, expectation)
+
+  assert.equal(bound.sourceKey, 'T')
+  assert.equal(bound.continuationBaseSha, 'e'.repeat(40))
+  assert.equal(bound.remediationDepth, 1)
+  assert.equal(bound.chainRootKey, 'T')
+  assert.equal(bindRemediationAction(null, expectation), null)
 })
 
 test('remediation transition proves exact insertion and source blocking', async () => {
