@@ -41,11 +41,12 @@ const graphState = ({ runnable = true, status = 'open', stopReason = '' } = {}) 
   tickets: [implementationTicket(status)],
 })
 
-const action = (sourceKey, actionCandidateSha, details) => ({
+const action = (sourceKey, actionCandidateSha, unavailableAxes, details) => ({
   candidateSha: actionCandidateSha,
   details,
   sourceKey,
   status: 'needs_attention',
+  unavailableAxes,
 })
 
 const runWorkflow = async (respond) => {
@@ -83,7 +84,19 @@ const preparedTicketAssignment = {
   worktree: '/worktrees/parent/T',
 }
 
-const ticketReviewResponder = (inventoryState) => async (label) => {
+const verifiedTicketOutage = {
+  candidateSha,
+  details: 'Confirmed ticket needs-attention tracker evidence.',
+  ok: true,
+  sourceKey: 'T',
+  status: 'needs_attention',
+  unavailableAxes: ['Spec'],
+}
+
+const ticketReviewResponder = (
+  inventoryState,
+  outageVerification = verifiedTicketOutage,
+) => async (label) => {
   if (label === 'bootstrap graph') {
     return initialTicketState
   }
@@ -143,7 +156,10 @@ const ticketReviewResponder = (inventoryState) => async (label) => {
     return null
   }
   if (label === 'record review failure 1 T') {
-    return action('T', candidateSha, 'Spec reviewer unavailable after retries.')
+    return action('T', candidateSha, ['Spec'], 'Spec reviewer unavailable after retries.')
+  }
+  if (label === 'verify review failure 1 T') {
+    return outageVerification
   }
   if (label === 'inventory after wave 1') {
     return inventoryState
@@ -170,8 +186,29 @@ test('missing ticket reviewer becomes operational needs-attention without remedi
   assert.equal(callFor(calls, 'spec 1.1 T').options.tier, 'big')
   assert.equal(callFor(calls, 'spec 1.1 T').options.retries, 2)
   assert.equal(callFor(calls, 'record review failure 1 T').options.tier, 'small')
+  assert.equal(callFor(calls, 'verify review failure 1 T').options.tier, 'small')
   assert.equal(callFor(calls, 'final implementation report').options.tier, 'medium')
   assert.equal(calls.some((call) => call.options.label.startsWith('remediate review')), false)
+})
+
+test('missing or mismatched ticket outage verification fails before inventory', async () => {
+  const mismatchedShaVerification = {
+    ...verifiedTicketOutage,
+    candidateSha: waveSha,
+  }
+  const mismatchedAxesVerification = {
+    ...verifiedTicketOutage,
+    unavailableAxes: ['Standards'],
+  }
+
+  for (const outageVerification of [null, mismatchedShaVerification, mismatchedAxesVerification]) {
+    const { calls, result } = await runWorkflow(ticketReviewResponder(initialTicketState, outageVerification))
+
+    assert.equal(result.ok, false)
+    assert.equal(result.verdict, 'hold')
+    assert.equal(calls.some((call) => call.options.label === 'inventory after wave 1'), false)
+    assert.equal(calls.some((call) => call.options.label.startsWith('remediate review')), false)
+  }
 })
 
 test('stale ticket inventory cannot erase an operational reviewer outage', async () => {
@@ -225,7 +262,7 @@ test('missing final reviewer holds the parent without final remediation', async 
       return null
     }
     if (label === 'record final review failure 1') {
-      return action('parent', finalSha, 'Final Spec reviewer unavailable after retries.')
+      return action('parent', finalSha, ['Spec'], 'Final Spec reviewer unavailable after retries.')
     }
     if (label === 'verify final review failure 1') {
       return {
@@ -234,6 +271,7 @@ test('missing final reviewer holds the parent without final remediation', async 
         ok: false,
         sourceKey: 'parent',
         status: 'needs_attention',
+        unavailableAxes: ['Spec'],
       }
     }
     if (label === 'final implementation report') {

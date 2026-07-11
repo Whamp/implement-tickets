@@ -281,11 +281,17 @@ const actionSchema = {
 const needsAttentionActionSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['status', 'sourceKey', 'candidateSha', 'details'],
+  required: ['status', 'sourceKey', 'candidateSha', 'unavailableAxes', 'details'],
   properties: {
     status: { type: 'string', enum: ['needs_attention'] },
     sourceKey: { type: 'string' },
     candidateSha: { type: 'string' },
+    unavailableAxes: {
+      type: 'array',
+      minItems: 1,
+      uniqueItems: true,
+      items: { type: 'string', enum: ['Standards', 'Spec'] },
+    },
     details: { type: 'string' },
   },
 }
@@ -293,12 +299,18 @@ const needsAttentionActionSchema = {
 const needsAttentionVerificationSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['ok', 'status', 'sourceKey', 'candidateSha', 'details'],
+  required: ['ok', 'status', 'sourceKey', 'candidateSha', 'unavailableAxes', 'details'],
   properties: {
     ok: { type: 'boolean' },
     status: { type: 'string', enum: ['needs_attention'] },
     sourceKey: { type: 'string' },
     candidateSha: { type: 'string' },
+    unavailableAxes: {
+      type: 'array',
+      minItems: 1,
+      uniqueItems: true,
+      items: { type: 'string', enum: ['Standards', 'Spec'] },
+    },
     details: { type: 'string' },
   },
 }
@@ -917,6 +929,7 @@ Return only evidence-backed findings. Use P0, P1, P2, or P3. P0/P1 block integra
     const integrationEvidence = []
     const remediationEvidence = []
     const reviewOutageEvidence = []
+    const reviewOutageVerificationEvidence = []
     for (const failed of prepared.failed) {
       dispositions.push(await agent(`
 Record ticket ${failed.key} as needs-attention for this coordinator session because preparation failed: ${failed.reason}
@@ -965,7 +978,7 @@ Candidate SHA: ${candidate.candidateSha}
 Candidate branch: ${candidate.branch}
 Candidate worktree: ${candidate.worktree}
 
-Treat this as an operational reviewer outage, not a code finding. Preserve the candidate branch/worktree, add durable tracker evidence, and do not create a remediation ticket or mark the source complete. Return status=needs_attention, sourceKey=${candidate.key}, and candidateSha=${candidate.candidateSha}. Do not change product code.
+Treat this as an operational reviewer outage, not a code finding. Preserve the candidate branch/worktree, add durable tracker evidence, and do not create a remediation ticket or mark the source complete. Return status=needs_attention, sourceKey=${candidate.key}, candidateSha=${candidate.candidateSha}, and unavailableAxes exactly equal to ${JSON.stringify(unavailableAxes)}. Do not change product code.
 `, {
           label: `record review failure ${wave} ${candidate.key}`,
           tier: 'small',
@@ -976,11 +989,41 @@ Treat this as an operational reviewer outage, not a code finding. Preserve the c
         if (!reviewFailure ||
             reviewFailure.status !== 'needs_attention' ||
             reviewFailure.sourceKey !== candidate.key ||
-            reviewFailure.candidateSha !== candidate.candidateSha) {
+            reviewFailure.candidateSha !== candidate.candidateSha ||
+            !Array.isArray(reviewFailure.unavailableAxes) ||
+            !sameKeys(reviewFailure.unavailableAxes, unavailableAxes)) {
           state = { ...state, ok: false, stopReason: `Reviewer outage for ${candidate.key} was not durably recorded.` }
           break
         }
+        const reviewFailureVerification = await agent(`
+Independently verify the durable ticket-level reviewer-outage record.
+Ticket: ${ticket.reference}
+Expected source key: ${candidate.key}
+Exact candidate SHA: ${candidate.candidateSha}
+Unavailable review axes: ${unavailableAxes.join(', ')}
+Candidate branch: ${candidate.branch}
+Candidate worktree: ${candidate.worktree}
+
+Stay read-only. Re-read the tracker and require a durable needs-attention record for this exact ticket, candidate SHA, and unavailable axes. Verify the user's checkout still matches the session baseline. Return status=needs_attention, sourceKey=${candidate.key}, candidateSha=${candidate.candidateSha}, unavailableAxes exactly equal to ${JSON.stringify(unavailableAxes)}, and ok=true only when that exact evidence exists. Do not modify code, tracker state, branches, or worktrees.
+`, {
+          label: `verify review failure ${wave} ${candidate.key}`,
+          tier: 'small',
+          agentType: 'ticket-graph-coordinator',
+          schema: needsAttentionVerificationSchema,
+        })
+        const reviewFailureIsDurable = reviewFailureVerification &&
+          reviewFailureVerification.ok &&
+          reviewFailureVerification.status === 'needs_attention' &&
+          reviewFailureVerification.sourceKey === candidate.key &&
+          reviewFailureVerification.candidateSha === candidate.candidateSha &&
+          Array.isArray(reviewFailureVerification.unavailableAxes) &&
+          sameKeys(reviewFailureVerification.unavailableAxes, unavailableAxes)
+        if (!reviewFailureIsDurable) {
+          state = { ...state, ok: false, stopReason: `Reviewer outage for ${candidate.key} was not durably verified.` }
+          break
+        }
         reviewOutageEvidence.push(reviewFailure)
+        reviewOutageVerificationEvidence.push(reviewFailureVerification)
         continue
       }
 
@@ -1168,6 +1211,7 @@ If the depth cap would be exceeded, create no ticket, mark the chain needs-atten
       integrationEvidence,
       remediationEvidence,
       reviewOutageEvidence,
+      reviewOutageVerificationEvidence,
     })
     if (!state || !state.ok) break
 
@@ -1270,7 +1314,7 @@ Exact candidate SHA: ${finalTarget.candidateSha}
 Coordinator branch: ${state.coordinatorBranch}
 Coordinator worktree: ${state.coordinatorWorktree}
 
-Treat this as an operational reviewer outage, not a code finding. Add durable tracker evidence, preserve all branches/worktrees, and do not create a parent remediation ticket, publish, or close the parent. Return status=needs_attention, sourceKey=parent, and candidateSha=${finalTarget.candidateSha}. Do not change product code.
+Treat this as an operational reviewer outage, not a code finding. Add durable tracker evidence, preserve all branches/worktrees, and do not create a parent remediation ticket, publish, or close the parent. Return status=needs_attention, sourceKey=parent, candidateSha=${finalTarget.candidateSha}, and unavailableAxes exactly equal to ${JSON.stringify(unavailableFinalAxes)}. Do not change product code.
 `, {
       label: `record final review failure ${finalReviewRound}`,
       tier: 'small',
@@ -1280,7 +1324,9 @@ Treat this as an operational reviewer outage, not a code finding. Add durable tr
     const reviewFailureActionMatches = reviewFailure &&
       reviewFailure.status === 'needs_attention' &&
       reviewFailure.sourceKey === 'parent' &&
-      reviewFailure.candidateSha === finalTarget.candidateSha
+      reviewFailure.candidateSha === finalTarget.candidateSha &&
+      Array.isArray(reviewFailure.unavailableAxes) &&
+      sameKeys(reviewFailure.unavailableAxes, unavailableFinalAxes)
     const reviewFailureVerification = reviewFailureActionMatches
       ? await agent(`
 Independently verify the durable parent-level reviewer-outage record.
@@ -1291,7 +1337,7 @@ Unavailable review axes: ${unavailableFinalAxes.join(', ')}
 Coordinator branch: ${state.coordinatorBranch}
 Coordinator worktree: ${state.coordinatorWorktree}
 
-Stay read-only. Re-read the tracker and require a durable needs-attention record for this exact parent, candidate SHA, and unavailable axes. Verify the user's checkout still matches the session baseline. Return status=needs_attention, sourceKey=parent, candidateSha=${finalTarget.candidateSha}, and ok=true only when that exact evidence exists. Do not modify code, tracker state, branches, or worktrees.
+Stay read-only. Re-read the tracker and require a durable needs-attention record for this exact parent, candidate SHA, and unavailable axes. Verify the user's checkout still matches the session baseline. Return status=needs_attention, sourceKey=parent, candidateSha=${finalTarget.candidateSha}, unavailableAxes exactly equal to ${JSON.stringify(unavailableFinalAxes)}, and ok=true only when that exact evidence exists. Do not modify code, tracker state, branches, or worktrees.
 `, {
         label: `verify final review failure ${finalReviewRound}`,
         tier: 'small',
@@ -1303,7 +1349,9 @@ Stay read-only. Re-read the tracker and require a durable needs-attention record
       reviewFailureVerification.ok &&
       reviewFailureVerification.status === 'needs_attention' &&
       reviewFailureVerification.sourceKey === 'parent' &&
-      reviewFailureVerification.candidateSha === finalTarget.candidateSha
+      reviewFailureVerification.candidateSha === finalTarget.candidateSha &&
+      Array.isArray(reviewFailureVerification.unavailableAxes) &&
+      sameKeys(reviewFailureVerification.unavailableAxes, unavailableFinalAxes)
     finalReviewHistory.push({
       round: finalReviewRound,
       target: finalTarget,
