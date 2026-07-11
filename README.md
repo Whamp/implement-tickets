@@ -24,13 +24,15 @@ The exact wording is a runtime contract:
 - Each reviewer returns its original 1–400-word axis report as durable structured evidence; schema and runtime checks enforce that range. Remediation tickets and final output preserve `## Standards` and `## Spec` separately without merging or reranking findings.
 - Tracker/spec references, review output identifiers, commit subjects, and standards-source paths are JSON-serialized, escaped, and enclosed in explicit untrusted-data elements so repository-controlled text cannot become reviewer instructions; commit and path shapes are validated before review.
 
-The graph workflow makes only these explicit adaptations:
+The graph workflow makes five core adaptations:
 
 1. A ticket plus its parent spec is the `/implement` input. Their Testing Decisions define the pre-agreed seams; a detached implementer stops when those seams are absent or ambiguous.
 2. The workflow performs `/code-review` after the implementer returns, using fresh independent sessions. The code-writing session never reviews itself.
 3. Coordinator-owned Git state supplies the fixed point instead of asking the user at each ticket. A bad ref or empty diff still fails before reviewers run.
 4. A missing or ambiguous parent/ticket spec fails bootstrap instead of skipping the Spec axis.
 5. Structured P0–P3 severities, durable remediation tickets, worktree isolation, and exact-SHA gates extend the upstream skills without replacing their wording.
+
+The complete [upstream adaptation ledger](docs/upstream-adaptations.md) maps every original instruction to its runtime owner, calls out deliberately omitted interactive paths, separates workflow extensions from upstream behavior, and defines the required migration procedure for future Matt Pocock skill releases. Its [machine-checkable registry](docs/upstream-contract.json) anchors 106 normative clauses to exact upstream quotes, dispositions, owners, support paths, and verification evidence.
 
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution and Matt Pocock's MIT license.
 
@@ -211,7 +213,7 @@ npm test
 
 Tests cover pinned upstream source hashes, verbatim prompt inclusion, review-context propagation, workflow portability and parsing, model routing and reviewer-outage behavior, role bindings, graph/remediation/completion invariants, generated saved-workflow identity, idempotent install and upgrade, conflict protection, Windows profile isolation, command behavior, and safe uninstall. CI runs on Linux, macOS, and Windows.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) before changing orchestration behavior.
+See [CONTRIBUTING.md](CONTRIBUTING.md) before changing orchestration behavior. Read the [upstream adaptation ledger](docs/upstream-adaptations.md) before updating the pinned Matt Pocock skills.
 
 ## License
 

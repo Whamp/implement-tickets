@@ -23,13 +23,15 @@ Keep implementation, Standards review, Spec review, and coordination in separate
 
 ## Upstream prompt contract
 
-Matt Pocock's pinned skill wording is a runtime contract, not prose to summarize.
+Matt Pocock's pinned skill wording is a runtime contract, not prose to summarize. The [upstream adaptation ledger](docs/upstream-adaptations.md) is the human compatibility record and upgrade procedure; [`docs/upstream-contract.json`](docs/upstream-contract.json) is its machine-checkable instruction registry.
 
+- Read the ledger and registry before changing the pinned upstream version or any workflow-owned adaptation.
 - Import upstream files from an immutable release tag or commit into `vendor/mattpocock-skills/<version>/` without editing them.
+- Diff and classify every changed upstream instruction; every semantic change needs a stable registry ID, exact upstream quote, primary disposition, runtime owner, support path, verification path, and explanatory ledger entry.
 - Keep upstream text byte-exact inside the relevant agent roles.
 - Put graph/worktree/SHA adaptations after the verbatim source block and label them explicitly.
-- Update the pinned hashes, README mapping, third-party notice, and fidelity tests in the same change.
-- Never silently paraphrase an upstream instruction to save prompt tokens.
+- Update the ledger, registry, pinned hashes, README mapping, third-party notice, and fidelity tests in the same change.
+- Never silently paraphrase, omit, or supersede an upstream instruction to save prompt tokens.
 
 ## Verification
 
